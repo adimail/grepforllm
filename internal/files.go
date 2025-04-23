@@ -2,8 +2,10 @@ package internal
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -48,6 +50,27 @@ func (app *App) ListFiles() error {
 			}
 			return nil
 		}
+
+		// --- Binary File Check ---
+		file, err := os.Open(path)
+		if err != nil {
+			log.Printf("Warning: Could not open file %s to check type: %v", path, err)
+			return nil
+		}
+		defer file.Close()
+
+		buffer := make([]byte, 512)
+		n, err := file.Read(buffer)
+		if err != nil && err != io.EOF {
+			log.Printf("Warning: Could not read from file %s to check type: %v", path, err)
+			return nil
+		}
+
+		contentType := http.DetectContentType(buffer[:n])
+		if !strings.HasPrefix(contentType, "text/") {
+			return nil
+		}
+
 		files = append(files, filepath.ToSlash(relPath))
 		return nil
 	})
