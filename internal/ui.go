@@ -18,11 +18,26 @@ func (app *App) Layout(g *gocui.Gui) error {
 	statusBarHeight := 1
 
 	filesViewY1 := maxY - statusBarHeight - filterHeight - 1
+	filterY0 := filesViewY1 + 1
+	filterY1 := filterY0 + filterHeight - 1
+	contentViewY1 := maxY - statusBarHeight - 1
+	statusBarY0 := maxY - statusBarHeight
+	statusBarY1 := maxY - 1
+
+	currentView := g.CurrentView()
+	currentViewName := ""
+	if currentView != nil {
+		currentViewName = currentView.Name()
+	}
+
 	if v, err := g.SetView(FilesViewName, 0, 0, filesWidth, filesViewY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
+		v.Title = " Files "
 		v.Highlight = true
+		v.SelBgColor = gocui.ColorDefault
+		v.SelFgColor = gocui.ColorYellow | gocui.AttrBold
 		v.Editable = false
 		v.Wrap = false
 		v.Autoscroll = false
@@ -33,41 +48,50 @@ func (app *App) Layout(g *gocui.Gui) error {
 			if _, err := g.SetCurrentView(FilesViewName); err != nil {
 				return err
 			}
+			currentViewName = FilesViewName
 		}
 	} else {
+		if currentViewName == FilesViewName {
+			v.FrameColor = gocui.ColorGreen
+			v.FgColor = gocui.ColorWhite
+		} else {
+			v.FrameColor = gocui.ColorBlue
+			v.FgColor = gocui.ColorDefault
+		}
 		app.refreshFilesView(g)
 	}
-
-	filterY0 := filesViewY1 + 1
-	filterY1 := filterY0 + filterHeight - 1
 
 	if v, err := g.SetView(FilterViewName, 0, filterY0, filesWidth, filterY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Editable = false             // Start non-editable
-		v.Wrap = false                 // Usually single line input
-		v.Highlight = true             // Highlight frame when focused
-		v.Editor = gocui.DefaultEditor // Need an editor even if not initially editable
+		v.Editable = false
+		v.Wrap = false
+		v.Highlight = true
+		v.Editor = gocui.DefaultEditor
+		v.FgColor = gocui.ColorYellow
 
 		app.updateFilterViewContent(g)
-	}
-
-	if v, err := g.View(FilterViewName); err == nil {
+	} else {
 		app.mutex.Lock()
 		modeStr := "Exclude"
 		if app.filterMode == IncludeMode {
 			modeStr = "Include"
 		}
 		app.mutex.Unlock()
-		v.Title = fmt.Sprintf(" Filter: %s (Tab: Focus, Enter: Apply, Ctrl+F: Mode) ", modeStr)
+		v.Title = fmt.Sprintf(" Filter: %s (Enter: Apply, Ctrl+F: Mode) ", modeStr)
+
+		if currentViewName == FilterViewName {
+			v.FrameColor = gocui.ColorGreen
+		} else {
+			v.FrameColor = gocui.ColorBlue
+		}
 
 		if !v.Editable {
 			app.updateFilterViewContent(g)
 		}
 	}
 
-	contentViewY1 := maxY - statusBarHeight - 1
 	if v, err := g.SetView(ContentViewName, filesWidth+1, 0, maxX-1, contentViewY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -76,20 +100,23 @@ func (app *App) Layout(g *gocui.Gui) error {
 		v.Editable = false
 		v.Wrap = true
 		v.Autoscroll = false
+		v.FrameColor = gocui.ColorBlue
 		app.refreshContentView(g)
 	} else {
 		app.refreshContentView(g)
 	}
 
-	statusY0 := maxY - statusBarHeight - 1
-	if v, err := g.SetView(StatusViewName, 0, statusY0+1, maxX-1, statusY0+statusBarHeight+1, gocui.TOP); err != nil {
+	if v, err := g.SetView(StatusViewName, 0, statusBarY0, maxX-1, statusBarY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
+			log.Printf("Error setting status view: %v", err)
 			return err
 		}
 		v.Frame = false
 		v.Editable = false
 		v.Wrap = false
-		fmt.Fprint(v, "↑/↓: Nav | Space: Sel | a: Sel All | c: Copy | Tab: Focus Filter | ?: Help | Ctrl+C: Quit")
+		v.FgColor = gocui.ColorWhite
+		v.BgColor = gocui.ColorBlue
+		app.resetStatus(g)
 	}
 
 	if app.showHelp {
@@ -98,12 +125,13 @@ func (app *App) Layout(g *gocui.Gui) error {
 		x0, y0 := (maxX-helpWidth)/2, (maxY-helpHeight)/2
 		x1, y1 := x0+helpWidth, y0+helpHeight
 
-		if v, err := g.SetView(HelpViewName, x0, y0, x1, y1, gocui.TOP); err != nil { // Use gocui.TOP
+		if v, err := g.SetView(HelpViewName, x0, y0, x1, y1, gocui.TOP); err != nil {
 			if err != gocui.ErrUnknownView {
 				return err
 			}
 			v.Title = " Help (? or Esc to Close) "
 			v.Wrap = true
+			v.FrameColor = gocui.ColorMagenta
 			fmt.Fprintln(v, "grepforllm - Copy File Contents for LLM Input")
 			fmt.Fprintln(v, "----------------------------------------")
 			fmt.Fprintln(v, "Keyboard Shortcuts:")
@@ -151,30 +179,57 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 	if app.filterMode == IncludeMode {
 		modeStr = "[Include]"
 	}
-	title := fmt.Sprintf(" Files (%d/%d) %s [?] Help ", len(app.selectedFiles), len(app.fileList), modeStr)
-	v.Title = title
+	selectedCount := len(app.selectedFiles)
+	totalCount := len(app.fileList)
 
-	if app.currentLine >= len(app.fileList) {
-		app.currentLine = max(0, len(app.fileList)-1)
+	if app.currentLine >= totalCount {
+		app.currentLine = max(0, totalCount-1)
+	}
+	if app.currentLine < 0 {
+		app.currentLine = 0
 	}
 
-	currentFileList := app.fileList // Use local copy within lock
-	currentSelectedFiles := app.selectedFiles
+	currentFileList := make([]string, totalCount)
+	copy(currentFileList, app.fileList)
+	currentSelectedFiles := make(map[string]bool, selectedCount)
+	for k, val := range app.selectedFiles {
+		currentSelectedFiles[k] = val
+	}
 	currentLine := app.currentLine
-	app.mutex.Unlock() // Unlock after reading shared state
+	app.mutex.Unlock()
 
-	for _, file := range currentFileList {
+	title := fmt.Sprintf(" Files (%d/%d) %s [?] Help ", selectedCount, totalCount, modeStr)
+	v.Title = title
+
+	for i, file := range currentFileList {
+		isSelected := currentSelectedFiles[file]
+		isCurrent := (i == currentLine)
 		prefix := "[ ]"
-		if currentSelectedFiles[file] {
+		if isSelected {
 			prefix = "[*]"
 		}
 		line := fmt.Sprintf("%s %s", prefix, file)
-		fmt.Fprintln(v, line)
+
+		if isCurrent {
+			fmt.Fprintf(v, "\x1b[7m%s\x1b[0m\n", line)
+		} else if isSelected {
+			fmt.Fprintf(v, "\x1b[32m%s\x1b[0m\n", line)
+		} else {
+			fmt.Fprintln(v, line)
+		}
 	}
 
-	_, oy := v.Origin()
-	cursorYInView := currentLine - oy
-	_ = v.SetCursor(0, cursorYInView)
+	if totalCount > 0 {
+		err = v.SetCursor(0, currentLine)
+		if err != nil {
+			log.Printf("Error setting cursor in files view: %v", err)
+		}
+	} else {
+		err = v.SetCursor(0, 0)
+		if err != nil {
+			log.Printf("Error resetting cursor in empty files view: %v", err)
+		}
+	}
 
 	app.adjustFilesViewScroll(g, v)
 }
@@ -191,34 +246,42 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 	count := 0
 
 	app.mutex.Lock()
-	currentFileList := app.fileList // Use local copy within lock
-	currentSelectedFiles := app.selectedFiles
+	selectedCount := len(app.selectedFiles)
+	currentFileList := make([]string, len(app.fileList))
+	copy(currentFileList, app.fileList)
+	currentSelectedFiles := make(map[string]bool, selectedCount)
+	for k, val := range app.selectedFiles {
+		currentSelectedFiles[k] = val
+	}
 	rootDir := app.rootDir
-	app.mutex.Unlock() // Unlock after reading shared state
+	app.mutex.Unlock()
 
 	for _, relPath := range currentFileList {
 		if currentSelectedFiles[relPath] {
 			fullPath := filepath.Join(rootDir, relPath)
 			fileContent, err := os.ReadFile(fullPath)
-			separator := fmt.Sprintf("--- FILE: %s ---\n", relPath)
+			separator := fmt.Sprintf("--- BEGIN FILE: %s ---\n", relPath)
+			endSeparator := fmt.Sprintf("--- END FILE: %s ---\n\n", relPath)
 
 			contentBuilder.WriteString(separator)
 			if err != nil {
 				log.Printf("Warning: Error reading file %s: %v", fullPath, err)
-				contentBuilder.WriteString(fmt.Sprintf("\n!!! ERROR READING FILE: %v !!!\n\n", err))
+				contentBuilder.WriteString(fmt.Sprintf("\n!!! ERROR READING FILE: %v !!!\n", err))
 			} else {
 				if contentBuilder.Len() > 0 && !strings.HasSuffix(contentBuilder.String(), "\n") {
 					contentBuilder.WriteString("\n")
 				}
-				contentBuilder.WriteString(string(fileContent))
+				contentBuilder.Write(fileContent)
 				if !strings.HasSuffix(string(fileContent), "\n") {
 					contentBuilder.WriteString("\n")
 				}
-				contentBuilder.WriteString("\n")
 			}
+			contentBuilder.WriteString(endSeparator)
 			count++
 		}
 	}
+
+	v.Title = fmt.Sprintf(" Content (%d files) - PgUp/PgDn Scroll ", count)
 
 	if count == 0 {
 		fmt.Fprintln(v, "Select files using [Space] to view content.")
@@ -226,10 +289,12 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 	} else {
 		fmt.Fprint(v, contentBuilder.String())
 	}
-	v.Title = fmt.Sprintf(" Content (%d files) - PgUp/PgDn Scroll ", count)
 
-	_ = v.SetOrigin(currentOx, currentOy)
-	app.scrollContent(g, 0)
+	err = v.SetOrigin(currentOx, currentOy)
+	if err != nil {
+		_ = v.SetOrigin(0, 0)
+		log.Printf("Warning: Could not restore content view origin (%d, %d), resetting. Error: %v", currentOx, currentOy, err)
+	}
 }
 
 func (app *App) updateStatus(g *gocui.Gui, message string) {
@@ -238,7 +303,8 @@ func (app *App) updateStatus(g *gocui.Gui, message string) {
 		if err == nil {
 			v.Clear()
 			fmt.Fprint(v, message)
-		} else {
+			v.Rewind()
+		} else if err != gocui.ErrUnknownView {
 			log.Printf("Error finding status view to update: %v", err)
 		}
 		return nil
@@ -251,7 +317,8 @@ func (app *App) resetStatus(g *gocui.Gui) {
 		if err == nil {
 			v.Clear()
 			fmt.Fprint(v, "↑/↓: Nav | Space: Sel | a: Sel All | c: Copy | Tab: Focus Filter | ?: Help | Ctrl+C: Quit")
-		} else {
+			v.Rewind()
+		} else if err != gocui.ErrUnknownView {
 			log.Printf("Error finding status view to reset: %v", err)
 		}
 		return nil

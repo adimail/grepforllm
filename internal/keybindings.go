@@ -40,13 +40,13 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding("", gocui.KeyPgup, gocui.ModNone, app.ScrollContentUp); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding("", gocui.KeyCtrlB, gocui.ModNone, app.ScrollContentUp); err != nil { // Vim-like page up
+	if err := g.SetKeybinding("", gocui.KeyCtrlB, gocui.ModNone, app.ScrollContentUp); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding("", gocui.KeyPgdn, gocui.ModNone, app.ScrollContentDown); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding("", gocui.KeyCtrlF, gocui.ModNone, app.ScrollContentDown); err != nil { // Vim-like page down
+	if err := g.SetKeybinding("", gocui.KeyCtrlF, gocui.ModNone, app.ScrollContentDown); err != nil {
 		return err
 	}
 

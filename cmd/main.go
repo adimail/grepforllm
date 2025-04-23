@@ -56,9 +56,9 @@ func main() {
 	defer g.Close()
 
 	g.Highlight = true
-	g.SelFgColor = gocui.ColorDefault // Remove selection colors
+	g.SelFgColor = gocui.ColorMagenta
 	g.SelBgColor = gocui.ColorDefault
-	g.Cursor = true // Show cursor in the files view
+	g.Cursor = true
 
 	// --- Configure and Run App ---
 	app.SetGui(g) // Pass the gui instance to the app

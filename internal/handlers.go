@@ -12,18 +12,14 @@ import (
 	"github.com/awesome-gocui/gocui"
 )
 
-// SwitchFocus handles Tab key presses to switch between Files and Filter views.
-// It also manages the Editable state of the Filter view.
 func (app *App) SwitchFocus(g *gocui.Gui, v *gocui.View) error {
 	currentView := g.CurrentView()
-	if currentView == nil {
-		_, err := g.SetCurrentView(FilesViewName)
-		return err
+	nextViewName := FilesViewName
+	if currentView != nil && currentView.Name() == FilesViewName {
+		nextViewName = FilterViewName
 	}
 
-	switch currentView.Name() {
-	case FilesViewName:
-		// Switch TO FilterView
+	if nextViewName == FilterViewName {
 		fv, err := g.View(FilterViewName)
 		if err != nil {
 			return err
@@ -33,24 +29,20 @@ func (app *App) SwitchFocus(g *gocui.Gui, v *gocui.View) error {
 		}
 		fv.Editable = true
 		app.updateFilterViewContent(g)
-		return nil
-
-	case FilterViewName:
-		fv := currentView
-		fv.Editable = false
-		app.updateFilterViewContent(g)
+	} else {
+		if fv, err := g.View(FilterViewName); err == nil {
+			fv.Editable = false
+			app.updateFilterViewContent(g)
+		}
 		if _, err := g.SetCurrentView(FilesViewName); err != nil {
 			return err
 		}
-		return nil
-
-	default:
-		if fv, err := g.View(FilterViewName); err == nil {
-			fv.Editable = false
-		}
-		_, err := g.SetCurrentView(FilesViewName)
-		return err
 	}
+
+	g.Update(func(g *gocui.Gui) error {
+		return app.Layout(g)
+	})
+	return nil
 }
 
 func (app *App) ToggleHelp(g *gocui.Gui, v *gocui.View) error {
@@ -72,25 +64,38 @@ func (app *App) ToggleHelp(g *gocui.Gui, v *gocui.View) error {
 		}
 		_, err := g.SetCurrentView(previousView)
 		return err
+	} else {
+		g.Update(func(g *gocui.Gui) error {
+			return app.Layout(g)
+		})
 	}
 	return nil
 }
 
-func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
-	if v == nil || v.Name() != FilterViewName {
-		return nil
+func (app *App) adjustFilesViewScroll(g *gocui.Gui, v *gocui.View) {
+	currentLine := app.currentLine
+
+	if v == nil || v.Name() != FilesViewName {
+		return
+	}
+	ox, oy := v.Origin()
+	_, vy := v.Size()
+
+	if currentLine < oy {
+		newOy := currentLine
+		err := v.SetOrigin(ox, newOy)
+		if err != nil {
+			log.Printf("Error scrolling files view up: %v", err)
+		}
 	}
 
-	app.mutex.Lock()
-	if app.filterMode == ExcludeMode {
-		app.filterMode = IncludeMode
-	} else {
-		app.filterMode = ExcludeMode
+	if currentLine >= oy+vy {
+		newOy := currentLine - vy + 1
+		err := v.SetOrigin(ox, newOy)
+		if err != nil {
+			log.Printf("Error scrolling files view down: %v", err)
+		}
 	}
-	app.mutex.Unlock()
-	app.updateFilterViewContent(g)
-
-	return nil
 }
 
 func (app *App) updateFilterViewContent(g *gocui.Gui) {
@@ -98,21 +103,26 @@ func (app *App) updateFilterViewContent(g *gocui.Gui) {
 	if err != nil {
 		return
 	}
-	v.Clear()
 
 	app.mutex.Lock()
 	var value string
-	if app.filterMode == ExcludeMode {
+	currentMode := app.filterMode
+	if currentMode == ExcludeMode {
 		value = app.excludes
 	} else {
 		value = app.includes
 	}
 	app.mutex.Unlock()
 
+	v.Clear()
 	fmt.Fprint(v, value)
+
 	if g.CurrentView() == v && v.Editable {
 		cursorPos := len(value)
-		_ = v.SetCursor(cursorPos, 0)
+		err = v.SetCursor(cursorPos, 0)
+		if err != nil {
+			log.Printf("Error setting cursor in filter view: %v", err)
+		}
 		maxX, _ := v.Size()
 		ox, _ := v.Origin()
 		if cursorPos < ox {
@@ -131,11 +141,11 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 
-	app.mutex.Lock() // Lock for modifying filter state
+	app.mutex.Lock()
 	pattern := strings.TrimSpace(v.Buffer())
 	if app.filterMode == ExcludeMode {
 		app.excludes = pattern
-	} else { // IncludeMode
+	} else {
 		app.includes = pattern
 	}
 	app.applyFilters()
@@ -143,6 +153,9 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 	v.Editable = false
 	app.updateFilterViewContent(g)
 	_, err := g.SetCurrentView(FilesViewName)
+	g.Update(func(g *gocui.Gui) error {
+		return app.Layout(g)
+	})
 	return err
 }
 
@@ -156,6 +169,9 @@ func (app *App) CancelFilter(g *gocui.Gui, v *gocui.View) error {
 	app.updateFilterViewContent(g)
 
 	_, err := g.SetCurrentView(FilesViewName)
+	g.Update(func(g *gocui.Gui) error {
+		return app.Layout(g)
+	})
 	return err
 }
 
@@ -173,6 +189,7 @@ func (app *App) CursorUp(g *gocui.Gui, v *gocui.View) error {
 	}
 	app.mutex.Unlock()
 	app.refreshFilesView(g)
+	app.refreshContentView(g)
 	return nil
 }
 
@@ -190,26 +207,28 @@ func (app *App) CursorDown(g *gocui.Gui, v *gocui.View) error {
 	}
 	app.mutex.Unlock()
 	app.refreshFilesView(g)
+	app.refreshContentView(g)
 	return nil
 }
 
-func (app *App) adjustFilesViewScroll(g *gocui.Gui, v *gocui.View) {
+func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
+	if v == nil || v.Name() != FilterViewName {
+		return nil
+	}
+
 	app.mutex.Lock()
-	currentLine := app.currentLine
+	if app.filterMode == ExcludeMode {
+		app.filterMode = IncludeMode
+	} else {
+		app.filterMode = ExcludeMode
+	}
 	app.mutex.Unlock()
+	app.updateFilterViewContent(g)
+	g.Update(func(g *gocui.Gui) error {
+		return app.Layout(g)
+	})
 
-	if v == nil || v.Name() != FilesViewName {
-		return
-	}
-	ox, oy := v.Origin()
-	_, vy := v.Size()
-
-	if currentLine < oy {
-		_ = v.SetOrigin(ox, currentLine)
-	}
-	if currentLine >= oy+vy {
-		_ = v.SetOrigin(ox, currentLine-vy+1)
-	}
+	return nil
 }
 
 func (app *App) ToggleSelect(g *gocui.Gui, v *gocui.View) error {
