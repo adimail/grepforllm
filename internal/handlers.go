@@ -370,6 +370,34 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 		statusMsg = fmt.Sprintf("Copied content of %d file(s) to clipboard.", count)
 	}
 
+	if err == nil && count > 0 {
+		go func() {
+			g.Update(func(g *gocui.Gui) error {
+				cv, err := g.View(ContentViewName)
+				if err == nil {
+					cv.BgColor = gocui.ColorYellow
+					cv.FgColor = gocui.ColorBlack
+				} else if err != gocui.ErrUnknownView {
+					log.Printf("Error getting content view for blink start: %v", err)
+				}
+				return nil
+			})
+
+			time.Sleep(250 * time.Millisecond)
+
+			g.Update(func(g *gocui.Gui) error {
+				cv, err := g.View(ContentViewName)
+				if err == nil {
+					cv.BgColor = gocui.ColorDefault
+					cv.FgColor = gocui.ColorDefault
+				} else if err != gocui.ErrUnknownView {
+					log.Printf("Error getting content view for blink end: %v", err)
+				}
+				return nil
+			})
+		}()
+	}
+
 	app.updateStatus(g, statusMsg)
 
 	go func(msg string) {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/awesome-gocui/gocui"
 )
@@ -247,6 +248,8 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 
 	var contentBuilder strings.Builder
 	count := 0
+	totalCharCount := 0
+	totalTokenCount := 0
 
 	app.mutex.Lock()
 	selectedCount := len(app.selectedFiles)
@@ -257,6 +260,7 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		currentSelectedFiles[k] = val
 	}
 	rootDir := app.rootDir
+	tokenizer := app.tokenizer
 	app.mutex.Unlock()
 
 	for _, relPath := range currentFileList {
@@ -274,6 +278,11 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 				if contentBuilder.Len() > len(separator) && !strings.HasSuffix(contentBuilder.String(), "\n") {
 					contentBuilder.WriteString("\n")
 				}
+				totalCharCount += utf8.RuneCount(fileContent)
+				if tokenizer != nil {
+					tokens := tokenizer.Encode(string(fileContent), nil, nil)
+					totalTokenCount += len(tokens)
+				}
 				contentBuilder.Write(fileContent)
 				if !strings.HasSuffix(string(fileContent), "\n") {
 					contentBuilder.WriteString("\n")
@@ -284,7 +293,7 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		}
 	}
 
-	v.Title = fmt.Sprintf(" Content (%d files) - PgUp/PgDn Scroll ", count)
+	v.Title = fmt.Sprintf(" Content (%d files | Chars: %d | Tokens: %d) - PgUp/PgDn Scroll ", count, totalCharCount, totalTokenCount)
 
 	if count == 0 {
 		fmt.Fprintln(v, "Select files using [Space] to view content.")

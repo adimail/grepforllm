@@ -1,9 +1,11 @@
 package internal
 
 import (
+	"log"
 	"sync"
 
 	"github.com/awesome-gocui/gocui"
+	"github.com/pkoukk/tiktoken-go"
 )
 
 // View names
@@ -37,10 +39,16 @@ type App struct {
 	excludes      string // Comma-separated patterns to exclude
 	includes      string // Comma-separated patterns to include
 	mutex         sync.Mutex
+	tokenizer     *tiktoken.Tiktoken
 }
 
 // NewApp creates a new application instance.
 func NewApp(rootDir string) *App {
+	tke, err := tiktoken.GetEncoding("cl100k_base")
+	if err != nil {
+		log.Fatalf("Error getting tiktoken encoding 'cl100k_base': %v", err)
+	}
+
 	return &App{
 		rootDir:       rootDir,
 		selectedFiles: make(map[string]bool),
@@ -51,6 +59,7 @@ func NewApp(rootDir string) *App {
 		filterMode:    ExcludeMode, // Default to exclude mode
 		excludes:      DefaultExcludes,
 		includes:      "",
+		tokenizer:     tke,
 	}
 }
 

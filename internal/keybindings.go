@@ -37,6 +37,9 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding(FilesViewName, 'c', gocui.ModNone, app.CopyAllSelected); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(FilesViewName, 'y', gocui.ModNone, app.CopyAllSelected); err != nil {
+		return err
+	}
 	if err := g.SetKeybinding("", gocui.KeyPgup, gocui.ModNone, app.ScrollContentUp); err != nil {
 		return err
 	}
