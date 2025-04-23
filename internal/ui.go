@@ -30,6 +30,7 @@ func (app *App) Layout(g *gocui.Gui) error {
 		currentViewName = currentView.Name()
 	}
 
+	// --- Files View ---
 	if v, err := g.SetView(FilesViewName, 0, 0, filesWidth, filesViewY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -53,10 +54,8 @@ func (app *App) Layout(g *gocui.Gui) error {
 	} else {
 		if currentViewName == FilesViewName {
 			v.FrameColor = gocui.ColorGreen
-			v.FgColor = gocui.ColorWhite
 		} else {
 			v.FrameColor = gocui.ColorBlue
-			v.FgColor = gocui.ColorDefault
 		}
 		app.refreshFilesView(g)
 	}
@@ -67,9 +66,8 @@ func (app *App) Layout(g *gocui.Gui) error {
 		}
 		v.Editable = false
 		v.Wrap = false
-		v.Highlight = true
 		v.Editor = gocui.DefaultEditor
-		v.FgColor = gocui.ColorYellow
+		v.FgColor = gocui.ColorCyan
 
 		app.updateFilterViewContent(g)
 	} else {
@@ -83,8 +81,10 @@ func (app *App) Layout(g *gocui.Gui) error {
 
 		if currentViewName == FilterViewName {
 			v.FrameColor = gocui.ColorGreen
+			v.FgColor = gocui.ColorWhite | gocui.AttrBold
 		} else {
 			v.FrameColor = gocui.ColorBlue
+			v.FgColor = gocui.ColorCyan
 		}
 
 		if !v.Editable {
@@ -119,6 +119,7 @@ func (app *App) Layout(g *gocui.Gui) error {
 		app.resetStatus(g)
 	}
 
+	// --- Help View (Modal) ---
 	if app.showHelp {
 		helpWidth := maxX / 2
 		helpHeight := maxY / 2
@@ -185,7 +186,9 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 	if app.currentLine >= totalCount {
 		app.currentLine = max(0, totalCount-1)
 	}
-	if app.currentLine < 0 {
+	if app.currentLine < 0 && totalCount > 0 {
+		app.currentLine = 0
+	} else if totalCount == 0 {
 		app.currentLine = 0
 	}
 
@@ -211,7 +214,7 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		line := fmt.Sprintf("%s %s", prefix, file)
 
 		if isCurrent {
-			fmt.Fprintf(v, "\x1b[7m%s\x1b[0m\n", line)
+			fmt.Fprintln(v, line)
 		} else if isSelected {
 			fmt.Fprintf(v, "\x1b[32m%s\x1b[0m\n", line)
 		} else {
@@ -268,7 +271,7 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 				log.Printf("Warning: Error reading file %s: %v", fullPath, err)
 				contentBuilder.WriteString(fmt.Sprintf("\n!!! ERROR READING FILE: %v !!!\n", err))
 			} else {
-				if contentBuilder.Len() > 0 && !strings.HasSuffix(contentBuilder.String(), "\n") {
+				if contentBuilder.Len() > len(separator) && !strings.HasSuffix(contentBuilder.String(), "\n") {
 					contentBuilder.WriteString("\n")
 				}
 				contentBuilder.Write(fileContent)
