@@ -1,3 +1,4 @@
+// FILE: cmd/main.go
 package main
 
 import (
@@ -37,23 +38,21 @@ func main() {
 	// --- Initialize App State ---
 	app := internal.NewApp(absRootDir)
 
-	ignoredFiles, err := internal.ListIgnoredFiles(app.RootDir())
+	matcher, err := internal.LoadGitignoreMatcher(app.RootDir())
 	if err != nil {
-		// Log a warning but continue - app can work without gitignore
-		log.Printf("Warning: Failed to read or parse .gitignore: %v", err)
+		log.Printf("Warning: Failed to parse .gitignore: %v", err)
+	} else if matcher != nil {
+		app.SetGitignoreMatcher(matcher)
 	} else {
-		app.SetGitIgnoredFiles(ignoredFiles)
+		log.Printf("Info: No .gitignore file found or parsed in %s", app.RootDir())
 	}
 
-	// --- List Initial Files ---
-	err = app.ListFiles() // Perform initial file listing (will now respect gitignore via shouldIncludeFile)
+	err = app.ListFiles()
 	if err != nil {
 		log.Fatalf("Error listing initial files in %s: %v", app.RootDir(), err)
 	}
 	if len(app.FileList()) == 0 {
 		log.Printf("No files found in %s (or all excluded by .gitignore or default excludes)", app.RootDir())
-		// Decide if you want to exit or show an empty UI
-		// For now, let's proceed to show the empty UI
 	}
 
 	// --- Initialize gocui ---
