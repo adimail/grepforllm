@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"log"
 	"sync"
 
 	"github.com/awesome-gocui/gocui"
@@ -10,12 +9,15 @@ import (
 
 // View names
 const (
-	FilesViewName   = "files"
-	ContentViewName = "content"
-	HelpViewName    = "help"
-	FilterViewName  = "filter"
-	StatusViewName  = "status" // Added for clarity
-	DefaultExcludes = ".git/,__pycache__/,node_modules/"
+	FilesViewName    = "files"
+	ContentViewName  = "content"
+	HelpViewName     = "help"
+	PreviewViewName  = "preview"
+	MaxSelectedFiles = 50
+	MaxFileSizeBytes = 100 * 1024
+	FilterViewName   = "filter"
+	StatusViewName   = "status"
+	DefaultExcludes  = ".git/,node_modules/"
 )
 
 // FilterMode defines whether the filter includes or excludes patterns.
@@ -33,27 +35,30 @@ type App struct {
 	fileList        []string // Currently displayed list of relative file paths
 	allFiles        []string // All discovered files before filtering
 	selectedFiles   map[string]bool
-	gitIgnoredFiles map[string]bool // <<< Add this field
-	currentLine     int             // Cursor position in the fileList view
+	gitIgnoredFiles map[string]bool
+	currentLine     int // Cursor position in the fileList view
 	showHelp        bool
 	filterMode      FilterMode
 	excludes        string // Comma-separated patterns to exclude
 	includes        string // Comma-separated patterns to include
 	mutex           sync.Mutex
 	tokenizer       *tiktoken.Tiktoken
+
+	// --- Preview State ---
+	isPreviewOpen  bool
+	previewFile    string
+	previewContent string
+	previewOriginY int
 }
 
 // NewApp creates a new application instance.
 func NewApp(rootDir string) *App {
-	tke, err := tiktoken.GetEncoding("cl100k_base")
-	if err != nil {
-		log.Fatalf("Error getting tiktoken encoding 'cl100k_base': %v", err)
-	}
+	tke, _ := tiktoken.GetEncoding("cl100k_base")
 
 	return &App{
 		rootDir:         rootDir,
 		selectedFiles:   make(map[string]bool),
-		gitIgnoredFiles: make(map[string]bool), // <<< Initialize the map
+		gitIgnoredFiles: make(map[string]bool),
 		fileList:        []string{},
 		allFiles:        []string{},
 		currentLine:     0,
@@ -62,6 +67,8 @@ func NewApp(rootDir string) *App {
 		excludes:        DefaultExcludes,
 		includes:        "",
 		tokenizer:       tke,
+		isPreviewOpen:   false,
+		previewOriginY:  0,
 	}
 }
 
@@ -81,7 +88,6 @@ func (app *App) FileList() []string {
 	return app.fileList
 }
 
-// <<< Add a method to populate gitIgnoredFiles >>>
 // SetGitIgnoredFiles populates the internal map of gitignored files.
 func (app *App) SetGitIgnoredFiles(ignoredPaths []string) {
 	app.mutex.Lock()
@@ -90,6 +96,4 @@ func (app *App) SetGitIgnoredFiles(ignoredPaths []string) {
 	for _, p := range ignoredPaths {
 		app.gitIgnoredFiles[p] = true
 	}
-	// It might be good practice to re-apply filters if this could be called later,
-	// but for initial setup, it's fine.
 }

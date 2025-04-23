@@ -2,7 +2,6 @@ package internal
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,7 +84,6 @@ func (app *App) adjustFilesViewScroll(g *gocui.Gui, v *gocui.View) {
 		newOy := currentLine
 		err := v.SetOrigin(ox, newOy)
 		if err != nil {
-			log.Printf("Error scrolling files view up: %v", err)
 		}
 	}
 
@@ -93,7 +91,6 @@ func (app *App) adjustFilesViewScroll(g *gocui.Gui, v *gocui.View) {
 		newOy := currentLine - vy + 1
 		err := v.SetOrigin(ox, newOy)
 		if err != nil {
-			log.Printf("Error scrolling files view down: %v", err)
 		}
 	}
 }
@@ -121,7 +118,6 @@ func (app *App) updateFilterViewContent(g *gocui.Gui) {
 		cursorPos := len(value)
 		err = v.SetCursor(cursorPos, 0)
 		if err != nil {
-			log.Printf("Error setting cursor in filter view: %v", err)
 		}
 		maxX, _ := v.Size()
 		ox, _ := v.Origin()
@@ -345,7 +341,6 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 
 			contentBuilder.WriteString(separator)
 			if err != nil {
-				log.Printf("Warning: Error reading file %s for copy: %v", fullPath, err)
 				contentBuilder.WriteString(fmt.Sprintf("\n!!! ERROR READING FILE: %v !!!\n\n", err))
 			} else {
 				contentBuilder.WriteString("\n")
@@ -364,7 +359,6 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 
 	var statusMsg string
 	if err != nil {
-		log.Printf("Error copying to clipboard: %v", err)
 		statusMsg = "Error copying to clipboard!"
 	} else {
 		statusMsg = fmt.Sprintf("Copied content of %d file(s) to clipboard.", count)
@@ -378,7 +372,6 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 					cv.BgColor = gocui.ColorYellow
 					cv.FgColor = gocui.ColorBlack
 				} else if err != gocui.ErrUnknownView {
-					log.Printf("Error getting content view for blink start: %v", err)
 				}
 				return nil
 			})
@@ -391,7 +384,6 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 					cv.BgColor = gocui.ColorDefault
 					cv.FgColor = gocui.ColorDefault
 				} else if err != gocui.ErrUnknownView {
-					log.Printf("Error getting content view for blink end: %v", err)
 				}
 				return nil
 			})
@@ -442,4 +434,107 @@ func (app *App) ScrollContentDown(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 	return app.scrollContent(g, 1)
+}
+
+func (app *App) ShowPreview(g *gocui.Gui, v *gocui.View) error {
+	if v == nil || v.Name() != FilesViewName {
+		return nil // Should only trigger from FilesView
+	}
+
+	app.mutex.Lock()
+	if len(app.fileList) == 0 || app.currentLine >= len(app.fileList) {
+		app.mutex.Unlock()
+		return nil // No file selected or list empty
+	}
+	selectedFileRelPath := app.fileList[app.currentLine]
+	rootDir := app.rootDir
+	app.mutex.Unlock() // Unlock before file I/O
+
+	fullPath := filepath.Join(rootDir, selectedFileRelPath)
+	contentBytes, err := os.ReadFile(fullPath)
+	content := ""
+	if err != nil {
+		content = fmt.Sprintf("Error reading file:\n%v", err)
+	} else {
+		// Basic check for binary content (can be improved)
+		if !isLikelyText(contentBytes) {
+			content = fmt.Sprintf("File appears to be binary:\n%s", selectedFileRelPath)
+		} else {
+			content = string(contentBytes)
+		}
+	}
+
+	app.mutex.Lock()
+	app.previewFile = selectedFileRelPath
+	app.previewContent = content
+	app.isPreviewOpen = true
+	app.previewOriginY = 0 // Reset scroll on new preview
+	app.mutex.Unlock()
+
+	// Trigger layout update which will create/show the view
+	g.Update(func(g *gocui.Gui) error {
+		// Layout will handle view creation and focus setting
+		return app.Layout(g)
+	})
+
+	return nil
+}
+
+func (app *App) ClosePreview(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.isPreviewOpen = false
+	app.previewContent = "" // Clear content
+	app.previewFile = ""
+	app.mutex.Unlock()
+
+	if err := g.DeleteView(PreviewViewName); err != nil && err != gocui.ErrUnknownView {
+		// Log or handle error if needed, but usually ErrUnknownView is fine
+	}
+	if _, err := g.SetCurrentView(FilesViewName); err != nil {
+		return err // Should generally succeed
+	}
+	// Optional: Trigger layout if needed, but deleting view + setting focus might suffice
+	// g.Update(func(g *gocui.Gui) error { return app.Layout(g) })
+	return nil
+}
+
+func (app *App) scrollPreview(g *gocui.Gui, v *gocui.View, direction int) error {
+	if v == nil || v.Name() != PreviewViewName {
+		return nil // Only scroll the preview view
+	}
+	ox, oy := v.Origin()
+	newOy := oy + direction
+	if newOy < 0 {
+		newOy = 0
+	}
+
+	// Set the view's origin
+	if err := v.SetOrigin(ox, newOy); err != nil {
+		return err
+	}
+
+	// Update the stored origin in app state
+	app.mutex.Lock()
+	app.previewOriginY = newOy
+	app.mutex.Unlock()
+
+	return nil
+}
+
+func (app *App) ScrollPreviewUp(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollPreview(g, v, -1) // Scroll up by 1 line
+}
+
+func (app *App) ScrollPreviewDown(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollPreview(g, v, 1) // Scroll down by 1 line
+}
+
+// Helper function (optional, can be refined)
+func isLikelyText(data []byte) bool {
+	for _, b := range data {
+		if b == 0 {
+			return false
+		}
+	}
+	return true
 }

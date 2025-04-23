@@ -37,16 +37,13 @@ func main() {
 	// --- Initialize App State ---
 	app := internal.NewApp(absRootDir)
 
-	// --- Get Gitignored Files --- // <<< Add this section >>>
 	ignoredFiles, err := internal.ListIgnoredFiles(app.RootDir())
 	if err != nil {
 		// Log a warning but continue - app can work without gitignore
 		log.Printf("Warning: Failed to read or parse .gitignore: %v", err)
 	} else {
 		app.SetGitIgnoredFiles(ignoredFiles)
-		log.Printf("Loaded %d paths from .gitignore", len(ignoredFiles))
 	}
-	// <<< End of added section >>>
 
 	// --- List Initial Files ---
 	err = app.ListFiles() // Perform initial file listing (will now respect gitignore via shouldIncludeFile)
