@@ -1,4 +1,3 @@
-// FILE: internal/gitignore.go
 package internal
 
 import (

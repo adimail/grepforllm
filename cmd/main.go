@@ -1,4 +1,3 @@
-// FILE: cmd/main.go
 package main
 
 import (

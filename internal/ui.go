@@ -14,15 +14,24 @@ func (app *App) Layout(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
 
 	filesWidth := maxX / 3
+	pathHeight := 2
 	filterHeight := 3
-	statusBarHeight := 1
+	statusBarHeight := 2
 
-	filesViewY1 := maxY - statusBarHeight - filterHeight - 1
+	// --- Y coordinates ---
+	pathY0 := 0
+	pathY1 := pathY0 + pathHeight
+
+	filesY0 := pathY1 + 1
+	filesViewY1 := maxY - statusBarHeight - filterHeight
+
 	filterY0 := filesViewY1 + 1
 	filterY1 := filterY0 + filterHeight - 1
-	contentViewY1 := maxY - statusBarHeight - 1
+
+	contentViewY1 := maxY - statusBarHeight
+
 	statusBarY0 := maxY - statusBarHeight
-	statusBarY1 := maxY - 1
+	statusBarY1 := maxY
 
 	currentView := g.CurrentView()
 	currentViewName := ""
@@ -30,15 +39,27 @@ func (app *App) Layout(g *gocui.Gui) error {
 		currentViewName = currentView.Name()
 	}
 
+	if pv, err := g.SetView(PathViewName, 0, pathY0, filesWidth, pathY1, 0); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		pv.Title = " Directory "
+		pv.Editable = false
+		pv.Wrap = false
+		pv.Frame = true
+		pv.FrameColor = gocui.ColorBlue
+		pv.FgColor = gocui.ColorMagenta
+		fmt.Fprint(pv, app.rootDir)
+	}
 	// --- Files View ---
-	if v, err := g.SetView(FilesViewName, 0, 0, filesWidth, filesViewY1, 0); err != nil {
+	if v, err := g.SetView(FilesViewName, 0, filesY0, filesWidth, filesViewY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
 		v.Title = " Files "
 		v.Highlight = true
 		v.SelBgColor = gocui.ColorDefault
-		v.SelFgColor = gocui.ColorYellow | gocui.AttrBold
+		v.SelFgColor = gocui.ColorCyan | gocui.AttrBold
 		v.Editable = false
 		v.Wrap = false
 		v.Autoscroll = false
@@ -54,17 +75,11 @@ func (app *App) Layout(g *gocui.Gui) error {
 			currentViewName = FilesViewName // Update currentViewName after setting focus
 		}
 	} else {
-		// Update frame color based on focus
-		if currentViewName == FilesViewName {
-			v.FrameColor = gocui.ColorGreen
-		} else {
-			v.FrameColor = gocui.ColorBlue
-		}
-		// Always refresh content
 		app.refreshFilesView(g)
 	}
 
 	// --- Filter View ---
+	// Adjusted Y coordinates: filterY0 and filterY1
 	if v, err := g.SetView(FilterViewName, 0, filterY0, filesWidth, filterY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -101,6 +116,7 @@ func (app *App) Layout(g *gocui.Gui) error {
 	}
 
 	// --- Content View ---
+	// Adjusted Y coordinate: contentViewY1
 	if v, err := g.SetView(ContentViewName, filesWidth+1, 0, maxX-1, contentViewY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -118,6 +134,7 @@ func (app *App) Layout(g *gocui.Gui) error {
 	}
 
 	// --- Status Bar ---
+	// Adjusted Y coordinates: statusBarY0 and statusBarY1
 	if v, err := g.SetView(StatusViewName, 0, statusBarY0, maxX-1, statusBarY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -126,7 +143,7 @@ func (app *App) Layout(g *gocui.Gui) error {
 		v.Editable = false
 		v.Wrap = false
 		v.FgColor = gocui.ColorWhite
-		v.BgColor = gocui.ColorBlue
+		v.BgColor = gocui.ColorDefault
 		// Initial population
 		app.resetStatus(g)
 	} // No else needed, status is updated via updateStatus/resetStatus
@@ -145,8 +162,8 @@ func (app *App) Layout(g *gocui.Gui) error {
 		previewHeight := maxY * 8 / 10
 		x0 := (maxX - previewWidth) / 2
 		y0 := (maxY - previewHeight) / 2
-		x1 := x0 + previewWidth
-		y1 := y0 + previewHeight
+		x1 := x0 + previewWidth - 1
+		y1 := y0 + previewHeight - 1
 
 		if pv, err := g.SetView(PreviewViewName, x0, y0, x1, y1, gocui.TOP); err != nil {
 			if err != gocui.ErrUnknownView {
@@ -220,26 +237,26 @@ func (app *App) Layout(g *gocui.Gui) error {
 			fmt.Fprintln(v, "grepforllm - Copy File Contents for LLM Input")
 			fmt.Fprintln(v, "----------------------------------------")
 			fmt.Fprintln(v, "Keyboard Shortcuts:")
-			fmt.Fprintln(v, "  ↑ / k       : Move cursor up in file list")
-			fmt.Fprintln(v, "  ↓ / j       : Move cursor down")
-			fmt.Fprintln(v, "  Enter       : Preview selected file") // <-- Added
-			fmt.Fprintln(v, "  Space       : Toggle select file")
-			fmt.Fprintln(v, "  a           : Select / Deselect all visible files")
-			fmt.Fprintln(v, "  c / y       : Copy contents of selected files") // <-- Combined c/y
-			fmt.Fprintln(v, "  Tab         : Switch focus between Files and Filter")
-			fmt.Fprintln(v, "  PgUp / Ctrl+B: Scroll main content view UP")
-			fmt.Fprintln(v, "  PgDn        : Scroll main content view DOWN") // <-- Adjusted PgDn/Ctrl+F
-			fmt.Fprintln(v, "  ?           : Toggle this help message")
-			fmt.Fprintln(v, "  Ctrl+C / q  : Quit the application (closes Preview if open)") // <-- Clarified q behavior
-			fmt.Fprintln(v, "\nIn Filter View (when focused):")
-			fmt.Fprintln(v, "  Enter       : Apply filter and return to Files")
-			fmt.Fprintln(v, "  Esc         : Cancel filter and return to Files")
-			fmt.Fprintln(v, "  Ctrl+F      : Toggle filter mode (Include/Exclude)")
+			fmt.Fprintln(v, "  ↑ / k         : Move cursor up in file list")
+			fmt.Fprintln(v, "  ↓ / j         : Move cursor down")
+			fmt.Fprintln(v, "  Enter         : Preview selected file")
+			fmt.Fprintln(v, "  Space         : Toggle select file")
+			fmt.Fprintln(v, "  a             : Select / Deselect all visible files")
+			fmt.Fprintln(v, "  c / y         : Copy contents of selected files")
+			fmt.Fprintln(v, "  Tab           : Switch focus between Files and Filter")
+			fmt.Fprintln(v, "  PgUp / Ctrl+B : Scroll main content view UP")
+			fmt.Fprintln(v, "  PgDn          : Scroll main content view DOWN")
+			fmt.Fprintln(v, "  ?             : Toggle this help message")
+			fmt.Fprintln(v, "  Ctrl+C / q    : Quit the application (closes Preview if open)")
+			fmt.Fprintln(v, "\nIn Filter View (when focused)  :")
+			fmt.Fprintln(v, "  Enter         : Apply filter and return to Files")
+			fmt.Fprintln(v, "  Esc           : Cancel filter and return to Files")
+			fmt.Fprintln(v, "  Ctrl+F        : Toggle filter mode (Include/Exclude)")
 			fmt.Fprintln(v, "  (Use comma-separated patterns, e.g., *.go,cmd/,Makefile)")
-			fmt.Fprintln(v, "\nIn Preview View (when focused):") // <-- Added Section
-			fmt.Fprintln(v, "  ↑ / k       : Scroll Up")
-			fmt.Fprintln(v, "  ↓ / j       : Scroll Down")
-			fmt.Fprintln(v, "  Esc / q     : Close Preview")
+			fmt.Fprintln(v, "\nIn Preview View (when focused):")
+			fmt.Fprintln(v, "  ↑ / k         : Scroll Up")
+			fmt.Fprintln(v, "  ↓ / j         : Scroll Down")
+			fmt.Fprintln(v, "  Esc / q       : Close Preview")
 
 			// Set focus to help view if it's not already focused
 			if currentViewName != HelpViewName {
@@ -419,8 +436,12 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 
 	// Write content to view
 	if count == 0 {
-		fmt.Fprintln(v, "Select files using [Space] to view content.")
-		fmt.Fprintln(v, "\nUse [?] for help.")
+		fmt.Fprintln(v, "\nSelect files using [Space] to view content.\n")
+		fmt.Fprintln(v, "[a]       : Select / Deselect all visible files")
+		fmt.Fprintln(v, "[c] / [y] : Copy content of selected files")
+		fmt.Fprintln(v, "[Tab]     : Focus views\n")
+		fmt.Fprintln(v, "\nExample patterns: *.txt (text files), config/ (config folder), README* (files starting with README).\n")
+		fmt.Fprintln(v, "\nUse [?] for full help.")
 	} else {
 		// Use Fprint to avoid extra newline added by Fprintln
 		fmt.Fprint(v, contentBuilder.String())

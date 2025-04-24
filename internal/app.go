@@ -10,6 +10,7 @@ import (
 
 // View names
 const (
+	PathViewName     = "path"
 	FilesViewName    = "files"
 	ContentViewName  = "content"
 	HelpViewName     = "help"
