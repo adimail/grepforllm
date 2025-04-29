@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,11 +21,13 @@ const (
 	ContentViewName  = "content"
 	HelpViewName     = "help"
 	PreviewViewName  = "preview"
-	MaxSelectedFiles = 50
-	MaxFileSizeBytes = 100 * 1024
 	FilterViewName   = "filter"
 	StatusViewName   = "status"
+	CacheViewName    = "cache"
+	ConfirmViewName  = "confirm"
 	DefaultExcludes  = ".git/,node_modules/"
+	MaxSelectedFiles = 50
+	MaxFileSizeBytes = 100 * 1024
 )
 
 // FilterMode defines whether the filter includes or excludes patterns.
@@ -71,6 +74,12 @@ type App struct {
 	// --- Cache State ---
 	cache         AppCache
 	cacheFilePath string
+
+	// --- Cache View State ---
+	showCacheView                  bool
+	cacheViewContent               string
+	cacheViewOriginY               int
+	awaitingCacheClearConfirmation bool
 }
 
 // NewApp creates a new application instance.
@@ -92,6 +101,12 @@ func NewApp(rootDir string) *App {
 		isPreviewOpen:    false,
 		previewOriginY:   0,
 		cache:            make(AppCache),
+
+		// --- Initialize Cache View State ---
+		showCacheView:                  false,
+		cacheViewContent:               "",
+		cacheViewOriginY:               0,
+		awaitingCacheClearConfirmation: false,
 	}
 
 	// --- Cache ---
@@ -106,14 +121,17 @@ func NewApp(rootDir string) *App {
 			app.cache = make(AppCache)
 		}
 
+		// Load settings for the current directory from cache if available
 		if entry, ok := app.cache[app.rootDir]; ok {
 			app.includes = entry.Includes
 			app.excludes = entry.Excludes
 			app.filterMode = entry.FilterMode
 
+			// Update last opened time
 			entry.LastOpened = time.Now()
 			app.cache[app.rootDir] = entry
 		} else {
+			// Add entry for the current directory if not present
 			app.cache[app.rootDir] = DirectoryCache{
 				Includes:   app.includes,
 				Excludes:   app.excludes,
@@ -122,6 +140,7 @@ func NewApp(rootDir string) *App {
 			}
 		}
 
+		// Save cache immediately after potential update/add
 		err = saveCache(app.cacheFilePath, app.cache)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Could not save cache file %s: %v\n", app.cacheFilePath, err)
@@ -191,7 +210,8 @@ func loadCache(filePath string) (AppCache, error) {
 
 	err = json.Unmarshal(data, &cache)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal cache data from %s: %w", filePath, err)
+		fmt.Fprintf(os.Stderr, "Warning: Failed to unmarshal cache data from %s: %v. Treating as empty.\n", filePath, err)
+		return make(AppCache), nil
 	}
 
 	return cache, nil
@@ -208,17 +228,30 @@ func saveCache(filePath string, cache AppCache) error {
 		return fmt.Errorf("failed to marshal cache data: %w", err)
 	}
 
+	// Use temp file for atomic write
 	tempFile := filePath + ".tmp"
-	err = os.WriteFile(tempFile, data, 0o600)
+	err = os.WriteFile(tempFile, data, 0o640)
 	if err != nil {
 		return fmt.Errorf("failed to write temporary cache file %s: %w", tempFile, err)
 	}
 
+	// Rename temporary file to the actual cache file path
 	err = os.Rename(tempFile, filePath)
 	if err != nil {
+		// Clean up temp file if rename fails
 		_ = os.Remove(tempFile)
 		return fmt.Errorf("failed to rename temporary cache file to %s: %w", filePath, err)
 	}
 
 	return nil
+}
+
+// Helper function to pretty print JSON bytes
+func prettyPrintJSON(data []byte) (string, error) {
+	var prettyJSON bytes.Buffer
+	err := json.Indent(&prettyJSON, data, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return prettyJSON.String(), nil
 }

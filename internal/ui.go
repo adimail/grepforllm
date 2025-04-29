@@ -10,8 +10,24 @@ import (
 	"github.com/awesome-gocui/gocui"
 )
 
+// Layout decides which UI layout to render based on app state.
 func (app *App) Layout(g *gocui.Gui) error {
+	app.mutex.Lock()
+	showCache := app.showCacheView
+	app.mutex.Unlock()
+
+	if showCache {
+		return app.layoutCacheView(g)
+	} else {
+		return app.GrepApplicationView(g)
+	}
+}
+
+// GrepApplicationView renders the standard file browser UI.
+func (app *App) GrepApplicationView(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
+
+	_ = g.DeleteView(CacheViewName)
 
 	filesWidth := maxX / 3
 	pathHeight := 2
@@ -39,6 +55,7 @@ func (app *App) Layout(g *gocui.Gui) error {
 		currentViewName = currentView.Name()
 	}
 
+	// --- Path View ---
 	if pv, err := g.SetView(PathViewName, 0, pathY0, filesWidth, pathY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -51,6 +68,7 @@ func (app *App) Layout(g *gocui.Gui) error {
 		pv.FgColor = gocui.ColorMagenta
 		fmt.Fprint(pv, app.rootDir)
 	}
+
 	// --- Files View ---
 	if v, err := g.SetView(FilesViewName, 0, filesY0, filesWidth, filesViewY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
@@ -64,22 +82,25 @@ func (app *App) Layout(g *gocui.Gui) error {
 		v.Wrap = false
 		v.Autoscroll = false
 
-		// Initial population if view is just created
 		app.refreshFilesView(g)
 
-		// Set initial focus if no view is focused
-		if g.CurrentView() == nil {
+		// Set initial focus if no view is focused or if returning from cache/help/preview
+		if g.CurrentView() == nil || currentViewName == CacheViewName || currentViewName == HelpViewName || currentViewName == PreviewViewName {
 			if _, err := g.SetCurrentView(FilesViewName); err != nil {
 				return err
 			}
-			currentViewName = FilesViewName // Update currentViewName after setting focus
+			currentViewName = FilesViewName
 		}
 	} else {
 		app.refreshFilesView(g)
+		if currentViewName == FilesViewName {
+			v.FrameColor = gocui.ColorGreen
+		} else {
+			v.FrameColor = gocui.ColorBlue
+		}
 	}
 
 	// --- Filter View ---
-	// Adjusted Y coordinates: filterY0 and filterY1
 	if v, err := g.SetView(FilterViewName, 0, filterY0, filesWidth, filterY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -88,8 +109,6 @@ func (app *App) Layout(g *gocui.Gui) error {
 		v.Wrap = false
 		v.Editor = gocui.DefaultEditor
 		v.FgColor = gocui.ColorCyan
-
-		// Initial population
 		app.updateFilterViewContent(g)
 	} else {
 		app.mutex.Lock()
@@ -100,7 +119,6 @@ func (app *App) Layout(g *gocui.Gui) error {
 		app.mutex.Unlock()
 		v.Title = fmt.Sprintf(" Filter: %s (Enter: Apply, Ctrl+F: Mode) ", modeStr)
 
-		// Update frame and text color based on focus
 		if currentViewName == FilterViewName {
 			v.FrameColor = gocui.ColorGreen
 			v.FgColor = gocui.ColorWhite | gocui.AttrBold
@@ -108,15 +126,12 @@ func (app *App) Layout(g *gocui.Gui) error {
 			v.FrameColor = gocui.ColorBlue
 			v.FgColor = gocui.ColorCyan
 		}
-
-		// Refresh content if not editable (i.e., not currently being edited)
 		if !v.Editable {
 			app.updateFilterViewContent(g)
 		}
 	}
 
 	// --- Content View ---
-	// Adjusted Y coordinate: contentViewY1
 	if v, err := g.SetView(ContentViewName, filesWidth+1, 0, maxX-1, contentViewY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -126,15 +141,17 @@ func (app *App) Layout(g *gocui.Gui) error {
 		v.Wrap = true
 		v.Autoscroll = false
 		v.FrameColor = gocui.ColorBlue
-		// Initial population
 		app.refreshContentView(g)
 	} else {
-		// Always refresh content
 		app.refreshContentView(g)
+		if currentViewName == ContentViewName {
+			v.FrameColor = gocui.ColorGreen
+		} else {
+			v.FrameColor = gocui.ColorBlue
+		}
 	}
 
 	// --- Status Bar ---
-	// Adjusted Y coordinates: statusBarY0 and statusBarY1
 	if v, err := g.SetView(StatusViewName, 0, statusBarY0, maxX-1, statusBarY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -144,9 +161,15 @@ func (app *App) Layout(g *gocui.Gui) error {
 		v.Wrap = false
 		v.FgColor = gocui.ColorWhite
 		v.BgColor = gocui.ColorDefault
-		// Initial population
 		app.resetStatus(g)
-	} // No else needed, status is updated via updateStatus/resetStatus
+	} else {
+		app.mutex.Lock()
+		awaitingConfirm := app.awaitingCacheClearConfirmation
+		app.mutex.Unlock()
+		if !awaitingConfirm {
+			app.resetStatus(g)
+		}
+	}
 
 	// --- Preview View (Modal/Floating) ---
 	app.mutex.Lock()
@@ -157,7 +180,6 @@ func (app *App) Layout(g *gocui.Gui) error {
 	app.mutex.Unlock()
 
 	if isPreviewOpen {
-		// Calculate dimensions (e.g., 80% width, 80% height, centered)
 		previewWidth := maxX * 8 / 10
 		previewHeight := maxY * 8 / 10
 		x0 := (maxX - previewWidth) / 2
@@ -169,49 +191,45 @@ func (app *App) Layout(g *gocui.Gui) error {
 			if err != gocui.ErrUnknownView {
 				return err
 			}
-			// Initialize the preview view
-			pv.Title = fmt.Sprintf(" Preview: %s  ", previewFile) // Updated title
+			pv.Title = fmt.Sprintf(" Preview: %s ", previewFile)
 			pv.Editable = false
-			pv.Wrap = true // Enable wrapping for long lines
+			pv.Wrap = true
 			pv.Autoscroll = false
 			pv.Frame = true
-			pv.FrameColor = gocui.ColorCyan
 			pv.FgColor = gocui.ColorWhite
 
-			// Set initial content and origin
 			pv.Clear()
 			fmt.Fprint(pv, previewContent)
-			_ = pv.SetOrigin(0, previewOriginY) // Use stored origin
+			_ = pv.SetOrigin(0, previewOriginY)
 
-			// Set focus to the new preview window
 			if _, err := g.SetCurrentView(PreviewViewName); err != nil {
 				return err
 			}
-			currentViewName = PreviewViewName // Update currentViewName
+			currentViewName = PreviewViewName
+			pv.FrameColor = gocui.ColorGreen
 		} else {
-			// View already exists, ensure content, title and origin are up-to-date
+			// Update existing preview view
 			pv.Title = fmt.Sprintf(" Preview: %s ", previewFile)
 			pv.Clear()
 			fmt.Fprint(pv, previewContent)
-			_ = pv.SetOrigin(0, previewOriginY) // Apply potentially updated origin
+			_ = pv.SetOrigin(0, previewOriginY)
 
-			// Ensure frame color reflects focus (important if focus changes rapidly)
 			if currentViewName == PreviewViewName {
-				pv.FrameColor = gocui.ColorGreen // Use green when focused
+				pv.FrameColor = gocui.ColorGreen
 			} else {
-				pv.FrameColor = gocui.ColorCyan // Use cyan when not focused (though it should be focused if open)
+				pv.FrameColor = gocui.ColorCyan
 			}
 		}
 	} else {
 		// Ensure preview view is deleted if it exists and shouldn't be open
 		if _, err := g.View(PreviewViewName); err == nil {
 			_ = g.DeleteView(PreviewViewName)
-			// If the deleted view was the current view, reset focus (e.g., to FilesView)
 			if currentViewName == PreviewViewName {
+				// Focus was on preview, return it to FilesView
 				if _, err := g.SetCurrentView(FilesViewName); err != nil {
-					// Log or handle error if setting focus fails
+					// Log or handle error
 				}
-				// No need to update currentViewName here, it will be updated on the next Layout cycle
+				// currentViewName will update on next Layout cycle
 			}
 		}
 	}
@@ -222,10 +240,10 @@ func (app *App) Layout(g *gocui.Gui) error {
 	app.mutex.Unlock()
 
 	if showHelp {
-		helpWidth := maxX / 2
-		helpHeight := maxY / 2
+		helpWidth := maxX * 2 / 3  // Adjusted width
+		helpHeight := maxY * 2 / 3 // Adjusted height
 		x0, y0 := (maxX-helpWidth)/2, (maxY-helpHeight)/2
-		x1, y1 := x0+helpWidth, y0+helpHeight
+		x1, y1 := x0+helpWidth-1, y0+helpHeight-1 // Adjusted for 0-based index
 
 		if v, err := g.SetView(HelpViewName, x0, y0, x1, y1, gocui.TOP); err != nil {
 			if err != gocui.ErrUnknownView {
@@ -233,38 +251,46 @@ func (app *App) Layout(g *gocui.Gui) error {
 			}
 			v.Title = " Help (? or Esc to Close) "
 			v.Wrap = true
-			v.FrameColor = gocui.ColorMagenta
+			v.Editable = false // Help view should not be editable
+			v.Frame = true
+			// Populate help text (consider updating with Ctrl+C, Ctrl+D, Ctrl+Q)
 			fmt.Fprintln(v, "grepforllm - Copy File Contents for LLM Input")
 			fmt.Fprintln(v, "----------------------------------------")
-			fmt.Fprintln(v, "Keyboard Shortcuts:")
-			fmt.Fprintln(v, "  ↑ / k         : Move cursor up in file list")
+			fmt.Fprintln(v, "Keyboard Shortcuts (Normal Mode):")
+			fmt.Fprintln(v, "  ↑ / k         : Move cursor up")
 			fmt.Fprintln(v, "  ↓ / j         : Move cursor down")
 			fmt.Fprintln(v, "  Enter         : Preview selected file")
 			fmt.Fprintln(v, "  Space         : Toggle select file")
 			fmt.Fprintln(v, "  a             : Select / Deselect all visible files")
 			fmt.Fprintln(v, "  c / y         : Copy contents of selected files")
-			fmt.Fprintln(v, "  Tab           : Switch focus between Files and Filter")
+			fmt.Fprintln(v, "  Tab           : Switch focus Files <-> Filter")
 			fmt.Fprintln(v, "  PgUp / Ctrl+B : Scroll main content view UP")
 			fmt.Fprintln(v, "  PgDn          : Scroll main content view DOWN")
 			fmt.Fprintln(v, "  ?             : Toggle this help message")
-			fmt.Fprintln(v, "  Ctrl+C / q    : Quit the application (closes Preview if open)")
-			fmt.Fprintln(v, "\nIn Filter View (when focused)  :")
-			fmt.Fprintln(v, "  Enter         : Apply filter and return to Files")
-			fmt.Fprintln(v, "  Esc           : Cancel filter and return to Files")
+			fmt.Fprintln(v, "  Ctrl+C        : Show Cache View")
+			fmt.Fprintln(v, "  q             : Quit / Close Preview / Close Cache")
+			fmt.Fprintln(v, "  Ctrl+Q        : Force Quit Application")
+			fmt.Fprintln(v, "\nIn Filter View:")
+			fmt.Fprintln(v, "  Enter         : Apply filter")
+			fmt.Fprintln(v, "  Esc           : Cancel filter")
 			fmt.Fprintln(v, "  Ctrl+F        : Toggle filter mode (Include/Exclude)")
-			fmt.Fprintln(v, "  (Use comma-separated patterns, e.g., *.go,cmd/,Makefile)")
-			fmt.Fprintln(v, "\nIn Preview View (when focused):")
-			fmt.Fprintln(v, "  ↑ / k         : Scroll Up")
-			fmt.Fprintln(v, "  ↓ / j         : Scroll Down")
+			fmt.Fprintln(v, "  (Patterns: *.go, cmd/, Makefile)")
+			fmt.Fprintln(v, "\nIn Preview View:")
+			fmt.Fprintln(v, "  ↑ / k / ↓ / j : Scroll Line")
+			fmt.Fprintln(v, "  PgUp / PgDn   : Scroll Page")
 			fmt.Fprintln(v, "  Esc / q       : Close Preview")
+			fmt.Fprintln(v, "\nIn Cache View:")
+			fmt.Fprintln(v, "  ↑ / k / ↓ / j : Scroll Line")
+			fmt.Fprintln(v, "  PgUp / PgDn   : Scroll Page")
+			fmt.Fprintln(v, "  Ctrl+D        : Prompt to clear cache")
+			fmt.Fprintln(v, "  y / n         : Confirm / Cancel cache clear")
+			fmt.Fprintln(v, "  Esc / q       : Close Cache View")
 
-			// Set focus to help view if it's not already focused
-			if currentViewName != HelpViewName {
-				if _, err := g.SetCurrentView(HelpViewName); err != nil {
-					return err
-				}
-				// currentViewName = HelpViewName // Update currentViewName
+			if _, err := g.SetCurrentView(HelpViewName); err != nil {
+				return err
 			}
+			currentViewName = HelpViewName
+			v.FrameColor = gocui.ColorGreen
 		} else {
 			// Ensure frame color reflects focus
 			if currentViewName == HelpViewName {
@@ -277,13 +303,95 @@ func (app *App) Layout(g *gocui.Gui) error {
 		// Ensure help view is deleted if it exists and shouldn't be open
 		if _, err := g.View(HelpViewName); err == nil {
 			_ = g.DeleteView(HelpViewName)
-			// If the deleted view was the current view, reset focus (unless preview is open)
 			if currentViewName == HelpViewName && !isPreviewOpen {
 				if _, err := g.SetCurrentView(FilesViewName); err != nil {
-					// Log or handle error if setting focus fails
+					// Log or handle error
 				}
-				// No need to update currentViewName here, it will be updated on the next Layout cycle
+				// currentViewName will update on next Layout cycle
 			}
+		}
+	}
+
+	return nil
+}
+
+// layoutCacheView renders the cache content view.
+func (app *App) layoutCacheView(g *gocui.Gui) error {
+	maxX, maxY := g.Size()
+
+	// --- Delete normal views ---
+	// Ensure a clean slate when showing the cache view
+	viewsToDelete := []string{
+		FilesViewName, ContentViewName, FilterViewName, PathViewName,
+		PreviewViewName, HelpViewName, // Also delete preview/help if they were open
+	}
+	for _, viewName := range viewsToDelete {
+		_ = g.DeleteView(viewName) // Ignore ErrUnknownView
+	}
+
+	// --- Cache View ---
+	cacheViewY1 := maxY - 2 // Leave space for status bar
+
+	app.mutex.Lock()
+	cacheContent := app.cacheViewContent
+	cacheOriginY := app.cacheViewOriginY
+	awaitingConfirm := app.awaitingCacheClearConfirmation
+	app.mutex.Unlock()
+
+	if cv, err := g.SetView(CacheViewName, 0, 0, maxX-1, cacheViewY1, gocui.TOP); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		// Initialize cache view
+		cv.Title = " Cache Contents (cache.json) "
+		cv.Editable = false
+		cv.Wrap = true // Enable wrapping
+		cv.Autoscroll = false
+		cv.Frame = true
+		cv.FgColor = gocui.ColorWhite
+
+		cv.Clear()
+		fmt.Fprint(cv, cacheContent)
+		_ = cv.SetOrigin(0, cacheOriginY)
+
+		// Set focus to the cache view
+		if _, err := g.SetCurrentView(CacheViewName); err != nil {
+			return err
+		}
+		cv.FrameColor = gocui.ColorGreen // Focused color
+	} else {
+		// Update existing cache view (e.g., after clearing cache)
+		cv.Clear()
+		fmt.Fprint(cv, cacheContent)
+		_ = cv.SetOrigin(0, cacheOriginY) // Apply potentially updated origin
+
+		// Ensure frame color reflects focus
+		if g.CurrentView() == cv {
+			cv.FrameColor = gocui.ColorGreen
+		} else {
+			cv.FrameColor = gocui.ColorCyan // Should not happen if logic is correct
+		}
+	}
+
+	// --- Status Bar ---
+	statusBarY0 := maxY - 2
+	statusBarY1 := maxY
+
+	if sv, err := g.SetView(StatusViewName, 0, statusBarY0, maxX-1, statusBarY1, 0); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		sv.Frame = false
+		sv.Editable = false
+		sv.Wrap = false
+		sv.FgColor = gocui.ColorWhite
+		sv.BgColor = gocui.ColorDefault
+		if !awaitingConfirm {
+			app.resetStatusForCacheView(g)
+		}
+	} else {
+		if !awaitingConfirm {
+			app.resetStatusForCacheView(g)
 		}
 	}
 
@@ -351,14 +459,12 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 
 	// Set cursor position (relative to view buffer, not origin)
 	if totalCount > 0 {
-		// gocui expects cursor position relative to the buffer content
-		err = v.SetCursor(0, currentLine)
+		err = v.SetCursor(0, currentLine) // gocui expects cursor relative to buffer
 		if err != nil {
 			// Log or handle error setting cursor
 		}
 	} else {
-		// No content, place cursor at 0,0
-		err = v.SetCursor(0, 0)
+		err = v.SetCursor(0, 0) // No content, place cursor at 0,0
 		if err != nil {
 			// Log or handle error
 		}
@@ -413,12 +519,9 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		if err != nil {
 			contentBuilder.WriteString(fmt.Sprintf("\n!!! ERROR READING FILE: %v !!!\n", err))
 		} else {
-			// Ensure newline before content if needed (shouldn't be necessary with separator)
-			// contentBuilder.WriteString("\n") // Add newline before content?
 			contentStr := string(fileContent)
 			totalCharCount += utf8.RuneCountInString(contentStr) // Use RuneCountInString for UTF-8
 			if tokenizer != nil {
-				// Consider running tokenization in a goroutine if it becomes slow
 				tokens := tokenizer.Encode(contentStr, nil, nil)
 				totalTokenCount += len(tokens)
 			}
@@ -443,68 +546,75 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		fmt.Fprintln(v, "\nExample patterns: *.txt (text files), config/ (config folder), README* (files starting with README).\n")
 		fmt.Fprintln(v, "\nUse [?] for full help.")
 	} else {
-		// Use Fprint to avoid extra newline added by Fprintln
 		fmt.Fprint(v, contentBuilder.String())
 	}
 
 	// Restore scroll position
-	// Check if the old origin is still valid given the new content height
-	_, contentHeight := v.Size() // This gets view size, not buffer size
+	_, viewHeight := v.Size() // This gets view size, not buffer size
 	bufferLines := strings.Count(v.ViewBuffer(), "\n")
-	maxOy := max(0, bufferLines-contentHeight) // Calculate max possible origin Y
+	maxOy := max(0, bufferLines-viewHeight) // Calculate max possible origin Y
 	if currentOy > maxOy {
 		currentOy = maxOy // Adjust if previous origin is now out of bounds
 	}
 
 	err = v.SetOrigin(currentOx, currentOy)
 	if err != nil {
-		// If setting origin fails, reset to 0,0
-		_ = v.SetOrigin(0, 0)
+		_ = v.SetOrigin(0, 0) // Reset to 0,0 on error
 	}
 }
 
-func (app *App) updateStatus(g *gocui.Gui, message string) {
-	// Run in g.Update to ensure thread safety with gocui
-	g.Update(func(g *gocui.Gui) error {
-		v, err := g.View(StatusViewName)
-		if err == nil {
-			v.Clear()
-			fmt.Fprint(v, message) // Use Fprint to avoid extra newline
-			v.Rewind()             // Ensure content starts from the beginning if it wraps
-		} else if err != gocui.ErrUnknownView {
-			// Log or handle error if view is unexpectedly missing
-			return err
-		}
-		return nil
-	})
-}
+// --- Status Bar Functions ---
 
-func (app *App) resetStatus(g *gocui.Gui) {
-	// Run in g.Update to ensure thread safety with gocui
+func (app *App) updateStatus(g *gocui.Gui, message string) {
 	g.Update(func(g *gocui.Gui) error {
 		v, err := g.View(StatusViewName)
 		if err == nil {
 			v.Clear()
-			// Updated status bar text to include Enter for preview
-			fmt.Fprint(v, "↑↓: Nav | Space: Sel | Enter: Preview | a: Sel All | c: Copy | Tab: Filter | ?: Help | q: Quit/Close")
+			fmt.Fprint(v, message)
 			v.Rewind()
 		} else if err != gocui.ErrUnknownView {
-			// Log or handle error if view is unexpectedly missing
 			return err
 		}
 		return nil
 	})
 }
 
-// refreshViews is a convenience function to update multiple views at once.
-func (app *App) refreshViews(g *gocui.Gui) {
-	// Run in g.Update to ensure thread safety with gocui
+// resetStatus sets the default status bar text for the normal file browser view.
+func (app *App) resetStatus(g *gocui.Gui) {
 	g.Update(func(g *gocui.Gui) error {
-		// Refreshing views might change layout/content, potentially affecting focus or origin.
-		// It's generally safe to call refresh functions within g.Update.
+		v, err := g.View(StatusViewName)
+		if err == nil {
+			v.Clear()
+			// Updated status bar text for normal mode
+			fmt.Fprint(v, "↑↓: Nav | Space: Sel | Enter: Preview | a: Sel All | c: Copy | Tab: Filter | ?: Help | Ctrl+C: Cache | q: Quit/Close")
+			v.Rewind()
+		} else if err != gocui.ErrUnknownView {
+			return err
+		}
+		return nil
+	})
+}
+
+// resetStatusForCacheView sets the default status bar text for the cache view.
+func (app *App) resetStatusForCacheView(g *gocui.Gui) {
+	g.Update(func(g *gocui.Gui) error {
+		v, err := g.View(StatusViewName)
+		if err == nil {
+			v.Clear()
+			fmt.Fprint(v, "↑↓ PgUp/Dn: Scroll | Ctrl+D: Clear Cache | Esc/q: Close Cache View")
+			v.Rewind()
+		} else if err != gocui.ErrUnknownView {
+			return err
+		}
+		return nil
+	})
+}
+
+// refreshViews is a convenience function to update multiple views at once (for normal layout).
+func (app *App) refreshViews(g *gocui.Gui) {
+	g.Update(func(g *gocui.Gui) error {
 		app.refreshFilesView(g)
 		app.refreshContentView(g)
-		// No need to explicitly call Layout here, gocui handles redrawing after Update.
 		return nil
 	})
 }
