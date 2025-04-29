@@ -80,6 +80,11 @@ type App struct {
 	cacheViewContent               string
 	cacheViewOriginY               int
 	awaitingCacheClearConfirmation bool
+
+	// --- Loading State ---
+	isLoading     bool
+	loadingError  error
+	loadStartTime time.Time
 }
 
 // NewApp creates a new application instance.
@@ -107,9 +112,13 @@ func NewApp(rootDir string) *App {
 		cacheViewContent:               "",
 		cacheViewOriginY:               0,
 		awaitingCacheClearConfirmation: false,
+
+		// --- Initialize Loading State ---
+		isLoading:     true,
+		loadingError:  nil,
+		loadStartTime: time.Now(),
 	}
 
-	// --- Cache ---
 	var err error
 	app.cacheFilePath, err = getCacheFilePath()
 	if err != nil {
@@ -126,12 +135,9 @@ func NewApp(rootDir string) *App {
 			app.includes = entry.Includes
 			app.excludes = entry.Excludes
 			app.filterMode = entry.FilterMode
-
-			// Update last opened time
 			entry.LastOpened = time.Now()
 			app.cache[app.rootDir] = entry
 		} else {
-			// Add entry for the current directory if not present
 			app.cache[app.rootDir] = DirectoryCache{
 				Includes:   app.includes,
 				Excludes:   app.excludes,
@@ -146,6 +152,7 @@ func NewApp(rootDir string) *App {
 			fmt.Fprintf(os.Stderr, "Warning: Could not save cache file %s: %v\n", app.cacheFilePath, err)
 		}
 	}
+
 	return app
 }
 

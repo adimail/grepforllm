@@ -318,3 +318,10 @@ func (app *App) shouldIncludeFileByFilters(relPath string, filterMode FilterMode
 		return true
 	}
 }
+
+func (app *App) SetLoadingComplete(err error) {
+	app.mutex.Lock()
+	defer app.mutex.Unlock()
+	app.isLoading = false
+	app.loadingError = err
+}
