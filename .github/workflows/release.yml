@@ -28,13 +28,13 @@ jobs:
         run: |
           mkdir dist # Create directory for binaries
           # Linux AMD64
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/fs-linux-amd64 cmd/main.go
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/fs-linux-amd64 .
           # Windows AMD64
-          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/fs-windows-amd64.exe cmd/main.go
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/fs-windows-amd64.exe .
           # macOS AMD64 (Intel)
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/fs-macos-amd64 cmd/main.go
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/fs-macos-amd64 .
           # macOS ARM64 (Apple Silicon)
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/fs-macos-arm64 cmd/main.go
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/fs-macos-arm64 .
         env:
           CGO_ENABLED: 1 # gocui likely needs CGO
 

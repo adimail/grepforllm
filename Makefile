@@ -1,12 +1,12 @@
 APP_NAME=fs
-CMD_PATH=cmd/main.go
+APP_SRC=main.go
 DIST_DIR=dist
 LDFLAGS=-ldflags="-s -w"
 
 build:
 	@echo "Building for local platform..."
 	@mkdir -p bin
-	@go build -o bin/$(APP_NAME) $(CMD_PATH)
+	@go build -o bin/$(APP_NAME) $(APP_SRC)
 
 run: build
 	@echo "Running local build..."
@@ -19,22 +19,22 @@ $(DIST_DIR):
 # Build for Linux (amd64)
 build-linux: $(DIST_DIR)
 	@echo "Building for Linux (amd64)..."
-	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(DIST_DIR)/$(APP_NAME)-linux-amd64 $(CMD_PATH)
+	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(DIST_DIR)/$(APP_NAME)-linux-amd64 $(APP_SRC)
 
 # Build for Windows (amd64)
 build-windows: $(DIST_DIR)
 	@echo "Building for Windows (amd64)..."
-	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(DIST_DIR)/$(APP_NAME)-windows-amd64.exe $(CMD_PATH)
+	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(DIST_DIR)/$(APP_NAME)-windows-amd64.exe $(APP_SRC)
 
 # Build for macOS (amd64 - Intel)
 build-mac-intel: $(DIST_DIR)
 	@echo "Building for macOS (amd64 - Intel)..."
-	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(DIST_DIR)/$(APP_NAME)-macos-amd64 $(CMD_PATH)
+	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(DIST_DIR)/$(APP_NAME)-macos-amd64 $(APP_SRC)
 
 # Build for macOS (arm64 - Apple Silicon)
 build-mac-arm: $(DIST_DIR)
 	@echo "Building for macOS (arm64 - Apple Silicon)..."
-	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(DIST_DIR)/$(APP_NAME)-macos-arm64 $(CMD_PATH)
+	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(DIST_DIR)/$(APP_NAME)-macos-arm64 $(APP_SRC)
 
 # Build all release binaries
 build-all: build-linux build-windows build-mac-intel build-mac-arm
