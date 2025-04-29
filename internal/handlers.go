@@ -138,21 +138,46 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 	}
 
 	app.mutex.Lock()
+
 	pattern := strings.TrimSpace(v.Buffer())
 	if app.filterMode == ExcludeMode {
 		app.excludes = pattern
 	} else {
 		app.includes = pattern
 	}
+
+	// --- Update Cache ---
+	if app.cacheFilePath != "" {
+		currentEntry := app.cache[app.rootDir]
+		currentEntry.Includes = app.includes
+		currentEntry.Excludes = app.excludes
+		currentEntry.LastOpened = time.Now()
+		currentEntry.FilterMode = app.filterMode
+		app.cache[app.rootDir] = currentEntry
+
+		err := saveCache(app.cacheFilePath, app.cache)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save cache on ApplyFilter: %v\n", err)
+		}
+	}
+
 	app.applyFilters()
 
-	v.Editable = false
-	app.updateFilterViewContent(g)
-	_, err := g.SetCurrentView(FilesViewName)
 	g.Update(func(g *gocui.Gui) error {
+		fv, err := g.View(FilterViewName)
+		if err == nil {
+			fv.Editable = false
+			app.updateFilterViewContent(g)
+		}
+
+		if _, err := g.SetCurrentView(FilesViewName); err != nil {
+			// Log or handle error
+		}
+
 		return app.Layout(g)
 	})
-	return err
+
+	return nil
 }
 
 func (app *App) CancelFilter(g *gocui.Gui, v *gocui.View) error {
