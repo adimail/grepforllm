@@ -4,39 +4,34 @@ import "github.com/awesome-gocui/gocui"
 
 func (app *App) SetKeybindings(g *gocui.Gui) error {
 	// --- Global ---
-	// if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil { // Original Ctrl+C quits
-	// 	return err
-	// }
-	// Rebind original Ctrl+C quit to something else if needed, e.g., Ctrl+Q
-	if err := g.SetKeybinding("", gocui.KeyCtrlQ, gocui.ModNone, quit); err != nil {
+	if err := g.SetKeybinding("", gocui.KeyCtrlQ, gocui.ModNone, quit); err != nil { // Force Quit
 		return err
 	}
-	// Add Ctrl+C binding to show cache view
-	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, app.ShowCacheView); err != nil {
+	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, app.ShowCacheView); err != nil { // Show Cache
 		return err
 	}
-
-	if err := g.SetKeybinding("", 'q', gocui.ModNone, app.QuitHandler); err != nil { // Use a handler that checks preview/cache view
+	if err := g.SetKeybinding("", 'q', gocui.ModNone, app.QuitHandler); err != nil { // Normal Quit / Close View
 		return err
 	}
-	if err := g.SetKeybinding("", '?', gocui.ModNone, app.ToggleHelp); err != nil {
+	if err := g.SetKeybinding("", '?', gocui.ModNone, app.ToggleHelp); err != nil { // Toggle Help
 		return err
 	}
-	if err := g.SetKeybinding("", gocui.KeyTab, gocui.ModNone, app.SwitchFocus); err != nil {
+	if err := g.SetKeybinding("", gocui.KeyTab, gocui.ModNone, app.SwitchFocus); err != nil { // Switch Focus (Files <-> Filter <-> Content)
 		return err
 	}
-	// Global scrolling for main content view
+	// Global scrolling for main content view (Page Up/Down) - Works regardless of focus (unless filter editable)
 	if err := g.SetKeybinding("", gocui.KeyPgup, gocui.ModNone, app.ScrollContentUp); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding("", gocui.KeyCtrlB, gocui.ModNone, app.ScrollContentUp); err != nil {
+	if err := g.SetKeybinding("", gocui.KeyCtrlB, gocui.ModNone, app.ScrollContentUp); err != nil { // Alternative Page Up
 		return err
 	}
 	if err := g.SetKeybinding("", gocui.KeyPgdn, gocui.ModNone, app.ScrollContentDown); err != nil {
 		return err
 	}
+	// Note: Ctrl+F for filter mode toggle is bound to FilterViewName below
 
-	// --- Files View ---
+	// --- Files View (FilesViewName) ---
 	if err := g.SetKeybinding(FilesViewName, gocui.KeyArrowUp, gocui.ModNone, app.CursorUp); err != nil {
 		return err
 	}
@@ -58,63 +53,57 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding(FilesViewName, 'c', gocui.ModNone, app.CopyAllSelected); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(FilesViewName, 'y', gocui.ModNone, app.CopyAllSelected); err != nil {
+	if err := g.SetKeybinding(FilesViewName, 'y', gocui.ModNone, app.CopyAllSelected); err != nil { // Alternative copy
 		return err
 	}
-	if err := g.SetKeybinding(FilesViewName, gocui.KeyEnter, gocui.ModNone, app.ShowPreview); err != nil {
+	// ENTER KEY: Focus the content view for scrolling
+	if err := g.SetKeybinding(FilesViewName, gocui.KeyEnter, gocui.ModNone, app.FocusContentView); err != nil {
 		return err
 	}
 
-	// --- Help View ---
+	// --- Content View (ContentViewName) ---
+	// Line scrolling only when content view is focused
+	if err := g.SetKeybinding(ContentViewName, gocui.KeyArrowUp, gocui.ModNone, app.ScrollContentLineUp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(ContentViewName, 'k', gocui.ModNone, app.ScrollContentLineUp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(ContentViewName, gocui.KeyArrowDown, gocui.ModNone, app.ScrollContentLineDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(ContentViewName, 'j', gocui.ModNone, app.ScrollContentLineDown); err != nil {
+		return err
+	}
+	// Page scrolling (PgUp/PgDn/Ctrl+B) is handled by global bindings already.
+	// Optional: Add Esc binding to return focus to FilesView?
+	// if err := g.SetKeybinding(ContentViewName, gocui.KeyEsc, gocui.ModNone, app.FocusFilesView); err != nil { // Requires FocusFilesView handler
+	// 	return err
+	// }
+
+	// --- Help View (HelpViewName) ---
 	if err := g.SetKeybinding(HelpViewName, '?', gocui.ModNone, app.ToggleHelp); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(HelpViewName, gocui.KeyEsc, gocui.ModNone, app.ToggleHelp); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(HelpViewName, 'q', gocui.ModNone, app.ToggleHelp); err != nil {
+	if err := g.SetKeybinding(HelpViewName, 'q', gocui.ModNone, app.ToggleHelp); err != nil { // 'q' also closes help
 		return err
 	}
 
-	// --- Filter View ---
-	if err := g.SetKeybinding(FilterViewName, gocui.KeyEnter, gocui.ModNone, app.ApplyFilter); err != nil {
+	// --- Filter View (FilterViewName) ---
+	if err := g.SetKeybinding(FilterViewName, gocui.KeyEnter, gocui.ModNone, app.ApplyFilter); err != nil { // Apply filter
 		return err
 	}
-	if err := g.SetKeybinding(FilterViewName, gocui.KeyEsc, gocui.ModNone, app.CancelFilter); err != nil {
+	if err := g.SetKeybinding(FilterViewName, gocui.KeyEsc, gocui.ModNone, app.CancelFilter); err != nil { // Cancel filter input
 		return err
 	}
-	if err := g.SetKeybinding(FilterViewName, gocui.KeyCtrlF, gocui.ModNone, app.ToggleFilterMode); err != nil {
-		return err
-	}
-
-	// --- Preview View ---
-	if err := g.SetKeybinding(PreviewViewName, gocui.KeyEsc, gocui.ModNone, app.ClosePreview); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(PreviewViewName, 'q', gocui.ModNone, app.ClosePreview); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(PreviewViewName, gocui.KeyArrowUp, gocui.ModNone, app.ScrollPreviewUp); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(PreviewViewName, 'k', gocui.ModNone, app.ScrollPreviewUp); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(PreviewViewName, gocui.KeyArrowDown, gocui.ModNone, app.ScrollPreviewDown); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(PreviewViewName, 'j', gocui.ModNone, app.ScrollPreviewDown); err != nil {
-		return err
-	}
-	// Add PgUp/PgDn for Preview? (Optional)
-	if err := g.SetKeybinding(PreviewViewName, gocui.KeyPgup, gocui.ModNone, app.ScrollPreviewPageUp); err != nil { // Assuming ScrollPreviewPageUp exists
-		return err
-	}
-	if err := g.SetKeybinding(PreviewViewName, gocui.KeyPgdn, gocui.ModNone, app.ScrollPreviewPageDown); err != nil { // Assuming ScrollPreviewPageDown exists
+	if err := g.SetKeybinding(FilterViewName, gocui.KeyCtrlF, gocui.ModNone, app.ToggleFilterMode); err != nil { // Toggle Include/Exclude
 		return err
 	}
 
-	// --- Cache View ---
+	// --- Cache View (CacheViewName) ---
 	if err := g.SetKeybinding(CacheViewName, gocui.KeyEsc, gocui.ModNone, app.CloseCacheView); err != nil {
 		return err
 	}
@@ -124,11 +113,10 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding(CacheViewName, gocui.KeyCtrlD, gocui.ModNone, app.PromptClearCache); err != nil {
 		return err
 	}
-	// Bindings for confirmation (only active when awaiting confirmation)
-	if err := g.SetKeybinding(CacheViewName, 'y', gocui.ModNone, app.ConfirmClearCache); err != nil {
+	if err := g.SetKeybinding(CacheViewName, 'y', gocui.ModNone, app.ConfirmClearCache); err != nil { // Confirm clear
 		return err
 	}
-	if err := g.SetKeybinding(CacheViewName, 'n', gocui.ModNone, app.CancelClearCache); err != nil {
+	if err := g.SetKeybinding(CacheViewName, 'n', gocui.ModNone, app.CancelClearCache); err != nil { // Cancel clear
 		return err
 	}
 	// Scrolling for Cache View
@@ -154,55 +142,23 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	return nil
 }
 
-// QuitHandler checks if preview or cache view is open before quitting
+// QuitHandler checks if cache view is open before quitting
 func (app *App) QuitHandler(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Lock()
-	isPreviewOpen := app.isPreviewOpen
 	isCacheViewOpen := app.showCacheView
 	awaitingConfirm := app.awaitingCacheClearConfirmation
 	app.mutex.Unlock()
 
 	if awaitingConfirm {
-		// If waiting for confirmation, 'q' or 'Esc' should cancel
-		return app.CancelClearCache(g, v)
+		// If waiting for cache clear confirmation, 'q' or 'Esc' should cancel
+		return app.CancelClearCache(g, v) // Assuming Esc is also bound to CancelClearCache or QuitHandler
 	}
 	if isCacheViewOpen {
 		return app.CloseCacheView(g, v)
 	}
-	if isPreviewOpen {
-		return app.ClosePreview(g, v)
-	}
-	// If nothing else is open, 'q' quits the app
+
+	// If nothing else is open/active, 'q' quits the app
 	return quit(g, v)
-}
-
-// Add scroll handlers for Preview PageUp/PageDown if they don't exist
-func (app *App) scrollPreviewPage(g *gocui.Gui, v *gocui.View, direction int) error {
-	if v == nil || v.Name() != PreviewViewName {
-		return nil
-	}
-	ox, oy := v.Origin()
-	_, vy := v.Size()
-	scrollAmount := max(1, vy-1) // Page scroll amount
-	newOy := oy + (direction * scrollAmount)
-	if newOy < 0 {
-		newOy = 0
-	}
-	if err := v.SetOrigin(ox, newOy); err != nil {
-		return err
-	}
-	app.mutex.Lock()
-	app.previewOriginY = newOy
-	app.mutex.Unlock()
-	return nil
-}
-
-func (app *App) ScrollPreviewPageUp(g *gocui.Gui, v *gocui.View) error {
-	return app.scrollPreviewPage(g, v, -1)
-}
-
-func (app *App) ScrollPreviewPageDown(g *gocui.Gui, v *gocui.View) error {
-	return app.scrollPreviewPage(g, v, 1)
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {

@@ -11,33 +11,65 @@ import (
 	"github.com/awesome-gocui/gocui"
 )
 
+// SwitchFocus handles Tab key presses to cycle focus between Files and Filter views.
 func (app *App) SwitchFocus(g *gocui.Gui, v *gocui.View) error {
 	currentView := g.CurrentView()
-	nextViewName := FilesViewName
-	if currentView != nil && currentView.Name() == FilesViewName {
-		nextViewName = FilterViewName
+	nextViewName := FilesViewName // Default to Files view
+
+	if currentView != nil {
+		switch currentView.Name() {
+		case FilesViewName:
+			nextViewName = FilterViewName
+		case FilterViewName:
+			// If coming from Filter, go back to Files
+			nextViewName = FilesViewName
+		case ContentViewName:
+			// If coming from Content, go to Filter
+			nextViewName = FilterViewName
+		default:
+			// If somehow focus is elsewhere, reset to Files
+			nextViewName = FilesViewName
+		}
 	}
 
-	if nextViewName == FilterViewName {
-		fv, err := g.View(FilterViewName)
-		if err != nil {
-			return err
-		}
-		if _, err := g.SetCurrentView(FilterViewName); err != nil {
-			return err
-		}
-		fv.Editable = true
-		app.updateFilterViewContent(g)
-	} else {
-		if fv, err := g.View(FilterViewName); err == nil {
+	// Handle FilterView specific logic (Editable state)
+	fv, errFv := g.View(FilterViewName)
+	if errFv == nil { // Only if FilterView exists
+		if nextViewName == FilterViewName {
+			fv.Editable = true
+			app.updateFilterViewContent(g) // Update content and cursor
+		} else {
 			fv.Editable = false
-			app.updateFilterViewContent(g)
-		}
-		if _, err := g.SetCurrentView(FilesViewName); err != nil {
-			return err
+			app.updateFilterViewContent(g) // Update content (removes cursor potentially)
 		}
 	}
 
+	// Set the new current view
+	if _, err := g.SetCurrentView(nextViewName); err != nil {
+		return err
+	}
+
+	// Trigger layout update to reflect focus changes (frame colors)
+	g.Update(func(g *gocui.Gui) error {
+		return app.Layout(g)
+	})
+	return nil
+}
+
+// FocusContentView switches focus to the content view. Triggered by Enter in FilesView.
+func (app *App) FocusContentView(g *gocui.Gui, v *gocui.View) error {
+	// Ensure the target view exists
+	if _, err := g.View(ContentViewName); err != nil {
+		// Content view doesn't exist? Should not happen in normal layout
+		return err
+	}
+
+	// Set focus
+	if _, err := g.SetCurrentView(ContentViewName); err != nil {
+		return err
+	}
+
+	// Update layout to reflect focus change (frame color)
 	g.Update(func(g *gocui.Gui) error {
 		return app.Layout(g)
 	})
@@ -55,15 +87,23 @@ func (app *App) ToggleHelp(g *gocui.Gui, v *gocui.View) error {
 
 	if !app.showHelp {
 		_ = g.DeleteView(HelpViewName)
-		previousView := FilesViewName
+		// Determine previous view more robustly
+		previousView := FilesViewName // Default
 		if currentViewName != HelpViewName && currentViewName != "" {
+			// If focus was on Filter or Content before help, return there?
+			// Let's simplify: always return to FilesView when closing help for now.
+			// If FilterView was editable, make it non-editable
 			if fv, err := g.View(FilterViewName); err == nil {
 				fv.Editable = false
+				app.updateFilterViewContent(g) // Update its display
 			}
 		}
 		_, err := g.SetCurrentView(previousView)
+		// Update layout after setting focus back
+		g.Update(func(g *gocui.Gui) error { return app.Layout(g) })
 		return err
 	} else {
+		// Show help: Layout will handle creation and focus setting
 		g.Update(func(g *gocui.Gui) error {
 			return app.Layout(g)
 		})
@@ -72,6 +112,7 @@ func (app *App) ToggleHelp(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *App) adjustFilesViewScroll(g *gocui.Gui, v *gocui.View) {
+	// This function remains the same - adjusts FilesView scroll based on app.currentLine
 	currentLine := app.currentLine
 
 	if v == nil || v.Name() != FilesViewName {
@@ -80,22 +121,21 @@ func (app *App) adjustFilesViewScroll(g *gocui.Gui, v *gocui.View) {
 	ox, oy := v.Origin()
 	_, vy := v.Size()
 
+	// Scroll up if cursor is above origin
 	if currentLine < oy {
 		newOy := currentLine
-		err := v.SetOrigin(ox, newOy)
-		if err != nil {
-		}
+		_ = v.SetOrigin(ox, newOy) // Ignore error for simplicity
 	}
 
+	// Scroll down if cursor is below visible area
 	if currentLine >= oy+vy {
 		newOy := currentLine - vy + 1
-		err := v.SetOrigin(ox, newOy)
-		if err != nil {
-		}
+		_ = v.SetOrigin(ox, newOy) // Ignore error for simplicity
 	}
 }
 
 func (app *App) updateFilterViewContent(g *gocui.Gui) {
+	// This function remains the same - updates the FilterView content and cursor
 	v, err := g.View(FilterViewName)
 	if err != nil {
 		return
@@ -114,11 +154,12 @@ func (app *App) updateFilterViewContent(g *gocui.Gui) {
 	v.Clear()
 	fmt.Fprint(v, value)
 
+	// Handle cursor position only if view is focused and editable
 	if g.CurrentView() == v && v.Editable {
-		cursorPos := len(value)
-		err = v.SetCursor(cursorPos, 0)
-		if err != nil {
-		}
+		cursorPos := len(value) // Place cursor at the end
+		_ = v.SetCursor(cursorPos, 0)
+
+		// Adjust origin if cursor is out of view horizontally
 		maxX, _ := v.Size()
 		ox, _ := v.Origin()
 		if cursorPos < ox {
@@ -127,12 +168,14 @@ func (app *App) updateFilterViewContent(g *gocui.Gui) {
 			_ = v.SetOrigin(cursorPos-maxX+1, 0)
 		}
 	} else {
+		// If not focused/editable, reset cursor and origin
 		_ = v.SetCursor(0, 0)
 		_ = v.SetOrigin(0, 0)
 	}
 }
 
 func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
+	// This function remains the same - applies filter, saves cache, returns focus to FilesView
 	if v == nil || v.Name() != FilterViewName {
 		return nil
 	}
@@ -148,6 +191,10 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 
 	// --- Update Cache ---
 	if app.cacheFilePath != "" {
+		// Ensure entry exists before modifying
+		if _, ok := app.cache[app.rootDir]; !ok {
+			app.cache[app.rootDir] = DirectoryCache{} // Create if missing
+		}
 		currentEntry := app.cache[app.rootDir]
 		currentEntry.Includes = app.includes
 		currentEntry.Excludes = app.excludes
@@ -157,23 +204,32 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 
 		err := saveCache(app.cacheFilePath, app.cache)
 		if err != nil {
+			// Log or display error? For now, print to stderr
 			fmt.Fprintf(os.Stderr, "Warning: Failed to save cache on ApplyFilter: %v\n", err)
+			// Optionally update status bar here
 		}
 	}
+	// Unlock mutex before calling applyFilters which acquires it again
+	app.mutex.Unlock()
 
-	app.applyFilters()
+	// applyFilters acquires lock, filters, updates state, and unlocks
+	app.applyFilters() // This now runs applyFilters without holding the lock from here
 
+	// Update UI after filtering is done
 	g.Update(func(g *gocui.Gui) error {
+		// Make filter view non-editable
 		fv, err := g.View(FilterViewName)
 		if err == nil {
 			fv.Editable = false
-			app.updateFilterViewContent(g)
+			app.updateFilterViewContent(g) // Update display (e.g., remove cursor)
 		}
 
+		// Set focus back to FilesView
 		if _, err := g.SetCurrentView(FilesViewName); err != nil {
 			// Log or handle error
 		}
 
+		// Trigger layout refresh
 		return app.Layout(g)
 	})
 
@@ -181,22 +237,26 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *App) CancelFilter(g *gocui.Gui, v *gocui.View) error {
+	// This function remains the same - cancels filter input, returns focus to FilesView
 	if v == nil || v.Name() != FilterViewName {
 		return nil
 	}
 
 	v.Editable = false
 
+	// Restore the content to the currently active filter value
 	app.updateFilterViewContent(g)
 
+	// Set focus back to FilesView
 	_, err := g.SetCurrentView(FilesViewName)
 	g.Update(func(g *gocui.Gui) error {
-		return app.Layout(g)
+		return app.Layout(g) // Update layout to reflect focus change
 	})
 	return err
 }
 
 func (app *App) CursorUp(g *gocui.Gui, v *gocui.View) error {
+	// This function remains the same - moves cursor up in FilesView, refreshes views
 	if v == nil || v.Name() != FilesViewName {
 		return nil
 	}
@@ -209,12 +269,13 @@ func (app *App) CursorUp(g *gocui.Gui, v *gocui.View) error {
 		app.currentLine--
 	}
 	app.mutex.Unlock()
-	app.refreshFilesView(g)
-	app.refreshContentView(g)
+	app.refreshFilesView(g)   // Update file list display (cursor)
+	app.refreshContentView(g) // Update content view with new file's content
 	return nil
 }
 
 func (app *App) CursorDown(g *gocui.Gui, v *gocui.View) error {
+	// This function remains the same - moves cursor down in FilesView, refreshes views
 	if v == nil || v.Name() != FilesViewName {
 		return nil
 	}
@@ -227,13 +288,16 @@ func (app *App) CursorDown(g *gocui.Gui, v *gocui.View) error {
 		app.currentLine++
 	}
 	app.mutex.Unlock()
-	app.refreshFilesView(g)
-	app.refreshContentView(g)
+	app.refreshFilesView(g)   // Update file list display (cursor)
+	app.refreshContentView(g) // Update content view with new file's content
 	return nil
 }
 
 func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
+	// This function remains the same - toggles filter mode when FilterView is focused
+	// Note: This binding might need adjustment if it should only work when FilterView is editable
 	if v == nil || v.Name() != FilterViewName {
+		// Or maybe allow toggling even when not editable? Let's keep it tied to FilterView focus.
 		return nil
 	}
 
@@ -243,8 +307,25 @@ func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
 	} else {
 		app.filterMode = ExcludeMode
 	}
+	// Update cache with new mode
+	if app.cacheFilePath != "" {
+		if _, ok := app.cache[app.rootDir]; ok {
+			currentEntry := app.cache[app.rootDir]
+			currentEntry.FilterMode = app.filterMode
+			currentEntry.LastOpened = time.Now() // Update timestamp
+			app.cache[app.rootDir] = currentEntry
+			// Save immediately? Or wait for ApplyFilter? Let's save.
+			err := saveCache(app.cacheFilePath, app.cache)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to save cache on ToggleFilterMode: %v\n", err)
+			}
+		}
+	}
 	app.mutex.Unlock()
+
+	// Update the filter view content (text) and title
 	app.updateFilterViewContent(g)
+	// Update the layout to refresh the title
 	g.Update(func(g *gocui.Gui) error {
 		return app.Layout(g)
 	})
@@ -253,6 +334,7 @@ func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *App) ToggleSelect(g *gocui.Gui, v *gocui.View) error {
+	// This function remains the same - toggles selection state of the current file
 	if v == nil || v.Name() != FilesViewName {
 		return nil
 	}
@@ -260,21 +342,31 @@ func (app *App) ToggleSelect(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Lock()
 	if len(app.fileList) == 0 || app.currentLine >= len(app.fileList) {
 		app.mutex.Unlock()
-		return nil
+		return nil // No file selected or list empty
 	}
 	selectedFile := app.fileList[app.currentLine]
 	if app.selectedFiles[selectedFile] {
 		delete(app.selectedFiles, selectedFile)
 	} else {
+		// Optional: Check against MaxSelectedFiles limit?
+		// if len(app.selectedFiles) >= MaxSelectedFiles {
+		//     app.mutex.Unlock()
+		//     app.updateStatus(g, fmt.Sprintf("Selection limit reached (%d files)", MaxSelectedFiles))
+		//     // Schedule status reset
+		//     return nil
+		// }
 		app.selectedFiles[selectedFile] = true
 	}
 	app.mutex.Unlock()
 
-	app.refreshViews(g)
+	// Refresh Files view immediately to show selection change
+	app.refreshFilesView(g)
+	// No need to refresh content view here, as selection doesn't affect it directly anymore
 	return nil
 }
 
 func (app *App) SelectAllFiles(g *gocui.Gui, v *gocui.View) error {
+	// This function remains the same - selects/deselects all *visible* files
 	if v == nil || v.Name() != FilesViewName {
 		return nil
 	}
@@ -285,23 +377,30 @@ func (app *App) SelectAllFiles(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 
-	allSelected := true
-	if len(app.selectedFiles) != len(app.fileList) {
-		allSelected = false
+	// Check if all *currently visible* files are selected
+	allVisibleSelected := true
+	if len(app.selectedFiles) < len(app.fileList) { // Optimization: if counts differ, not all selected
+		allVisibleSelected = false
 	} else {
 		for _, file := range app.fileList {
 			if !app.selectedFiles[file] {
-				allSelected = false
+				allVisibleSelected = false
 				break
 			}
 		}
 	}
 
 	statusMsg := ""
-	if allSelected {
-		app.selectedFiles = make(map[string]bool)
+	if allVisibleSelected {
+		// Deselect all visible files
+		for _, file := range app.fileList {
+			delete(app.selectedFiles, file)
+		}
 		statusMsg = "Deselected all visible files."
 	} else {
+		// Select all visible files
+		// Optional: Check limit before selecting all
+		// if len(app.fileList) > MaxSelectedFiles { ... handle limit ... }
 		for _, file := range app.fileList {
 			app.selectedFiles[file] = true
 		}
@@ -310,8 +409,9 @@ func (app *App) SelectAllFiles(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Unlock()
 
 	app.updateStatus(g, statusMsg)
-	app.refreshViews(g)
+	app.refreshFilesView(g)
 
+	// Schedule status reset
 	go func(msg string) {
 		time.Sleep(2 * time.Second)
 		g.Update(func(g *gocui.Gui) error {
@@ -327,6 +427,7 @@ func (app *App) SelectAllFiles(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
+	// This function remains the same - copies selected files, highlights file list
 	app.mutex.Lock()
 
 	if len(app.selectedFiles) == 0 {
@@ -389,30 +490,26 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 		statusMsg = fmt.Sprintf("Copied content of %d file(s) to clipboard.", count)
 	}
 
+	// --- File List Highlight ---
 	if err == nil && count > 0 {
-		go func() {
+		app.mutex.Lock()
+		app.isCopyHighlightActive = true
+		app.mutex.Unlock()
+
+		g.Update(func(g *gocui.Gui) error {
+			app.refreshFilesView(g)
+			return nil
+		})
+
+		time.AfterFunc(350*time.Millisecond, func() {
+			app.mutex.Lock()
+			app.isCopyHighlightActive = false
+			app.mutex.Unlock()
 			g.Update(func(g *gocui.Gui) error {
-				cv, err := g.View(ContentViewName)
-				if err == nil {
-					cv.BgColor = gocui.ColorYellow
-					cv.FgColor = gocui.ColorBlack
-				} else if err != gocui.ErrUnknownView {
-				}
+				app.refreshFilesView(g)
 				return nil
 			})
-
-			time.Sleep(250 * time.Millisecond)
-
-			g.Update(func(g *gocui.Gui) error {
-				cv, err := g.View(ContentViewName)
-				if err == nil {
-					cv.BgColor = gocui.ColorDefault
-					cv.FgColor = gocui.ColorDefault
-				} else if err != gocui.ErrUnknownView {
-				}
-				return nil
-			})
-		}()
+		})
 	}
 
 	app.updateStatus(g, statusMsg)
@@ -431,135 +528,86 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-func (app *App) scrollContent(g *gocui.Gui, direction int) error {
+// scrollContent scrolls the ContentViewName by a given amount (positive=down, negative=up).
+// It also updates the app.contentViewOriginY state.
+func (app *App) scrollContent(g *gocui.Gui, amount int) error {
 	v, err := g.View(ContentViewName)
 	if err != nil {
-		return nil
-	}
-	ox, oy := v.Origin()
-	_, vy := v.Size()
-
-	scrollAmount := max(1, vy-1)
-
-	newOy := oy + (direction * scrollAmount)
-
-	if newOy < 0 {
-		newOy = 0
+		return nil // View doesn't exist
 	}
 
-	return v.SetOrigin(ox, newOy)
-}
-
-func (app *App) ScrollContentUp(g *gocui.Gui, v *gocui.View) error {
-	return app.scrollContent(g, -1)
-}
-
-func (app *App) ScrollContentDown(g *gocui.Gui, v *gocui.View) error {
+	// Prevent scrolling if filter view is focused and editable
 	if cv := g.CurrentView(); cv != nil && cv.Name() == FilterViewName {
-		return nil
-	}
-	return app.scrollContent(g, 1)
-}
-
-func (app *App) ShowPreview(g *gocui.Gui, v *gocui.View) error {
-	if v == nil || v.Name() != FilesViewName {
-		return nil // Should only trigger from FilesView
-	}
-
-	app.mutex.Lock()
-	if len(app.fileList) == 0 || app.currentLine >= len(app.fileList) {
-		app.mutex.Unlock()
-		return nil // No file selected or list empty
-	}
-	selectedFileRelPath := app.fileList[app.currentLine]
-	rootDir := app.rootDir
-	app.mutex.Unlock() // Unlock before file I/O
-
-	fullPath := filepath.Join(rootDir, selectedFileRelPath)
-	contentBytes, err := os.ReadFile(fullPath)
-	content := ""
-	if err != nil {
-		content = fmt.Sprintf("Error reading file:\n%v", err)
-	} else {
-		// Basic check for binary content (can be improved)
-		if !isLikelyText(contentBytes) {
-			content = fmt.Sprintf("File appears to be binary:\n%s", selectedFileRelPath)
-		} else {
-			content = string(contentBytes)
+		fv, _ := g.View(FilterViewName)
+		if fv != nil && fv.Editable {
+			return nil // Don't scroll content when editing filter
 		}
 	}
 
-	app.mutex.Lock()
-	app.previewFile = selectedFileRelPath
-	app.previewContent = content
-	app.isPreviewOpen = true
-	app.previewOriginY = 0 // Reset scroll on new preview
-	app.mutex.Unlock()
-
-	// Trigger layout update which will create/show the view
-	g.Update(func(g *gocui.Gui) error {
-		// Layout will handle view creation and focus setting
-		return app.Layout(g)
-	})
-
-	return nil
-}
-
-func (app *App) ClosePreview(g *gocui.Gui, v *gocui.View) error {
-	app.mutex.Lock()
-	app.isPreviewOpen = false
-	app.previewContent = "" // Clear content
-	app.previewFile = ""
-	app.mutex.Unlock()
-
-	if err := g.DeleteView(PreviewViewName); err != nil && err != gocui.ErrUnknownView {
-		// Log or handle error if needed, but usually ErrUnknownView is fine
-	}
-	if _, err := g.SetCurrentView(FilesViewName); err != nil {
-		return err // Should generally succeed
-	}
-	// Optional: Trigger layout if needed, but deleting view + setting focus might suffice
-	// g.Update(func(g *gocui.Gui) error { return app.Layout(g) })
-	return nil
-}
-
-func (app *App) scrollPreview(g *gocui.Gui, v *gocui.View, direction int) error {
-	if v == nil || v.Name() != PreviewViewName {
-		return nil // Only scroll the preview view
-	}
 	ox, oy := v.Origin()
-	newOy := oy + direction
+	newOy := oy + amount
+
+	// Clamp newOy to be non-negative
 	if newOy < 0 {
 		newOy = 0
 	}
 
-	// Set the view's origin
+	// Set the new origin. gocui's SetOrigin handles clamping at the bottom.
 	if err := v.SetOrigin(ox, newOy); err != nil {
+		// Log error? For now, just return it.
 		return err
 	}
 
-	// Update the stored origin in app state
+	// If SetOrigin succeeded, update the stored origin state
+	// Read the actual origin back from the view in case it was clamped
+	_, actualNewOy := v.Origin()
 	app.mutex.Lock()
-	app.previewOriginY = newOy
+	app.contentViewOriginY = actualNewOy
 	app.mutex.Unlock()
 
 	return nil
 }
 
-func (app *App) ScrollPreviewUp(g *gocui.Gui, v *gocui.View) error {
-	return app.scrollPreview(g, v, -1) // Scroll up by 1 line
-}
-
-func (app *App) ScrollPreviewDown(g *gocui.Gui, v *gocui.View) error {
-	return app.scrollPreview(g, v, 1) // Scroll down by 1 line
-}
-
-// Helper function (optional, can be refined)
-func isLikelyText(data []byte) bool {
-	for _, b := range data {
-		if b == 0 {
-			return false
-		}
+// ScrollContentUp handles page up scrolling for the content view.
+func (app *App) ScrollContentUp(g *gocui.Gui, v *gocui.View) error {
+	// Determine scroll amount (page size)
+	cv, err := g.View(ContentViewName)
+	if err != nil {
+		return nil // Should not happen if called from global binding
 	}
-	return true
+	_, vy := cv.Size()
+	scrollAmount := max(1, vy-1) // Page size
+
+	return app.scrollContent(g, -scrollAmount) // Negative amount for up
+}
+
+// ScrollContentDown handles page down scrolling for the content view.
+func (app *App) ScrollContentDown(g *gocui.Gui, v *gocui.View) error {
+	// Determine scroll amount (page size)
+	cv, err := g.View(ContentViewName)
+	if err != nil {
+		return nil
+	}
+	_, vy := cv.Size()
+	scrollAmount := max(1, vy-1) // Page size
+
+	return app.scrollContent(g, scrollAmount) // Positive amount for down
+}
+
+// ScrollContentLineUp handles single line up scrolling (e.g., for 'k' or ArrowUp in ContentView).
+func (app *App) ScrollContentLineUp(g *gocui.Gui, v *gocui.View) error {
+	// Only scroll if the ContentView actually has focus
+	if cv := g.CurrentView(); cv == nil || cv.Name() != ContentViewName {
+		return nil
+	}
+	return app.scrollContent(g, -1) // Scroll up by 1 line
+}
+
+// ScrollContentLineDown handles single line down scrolling (e.g., for 'j' or ArrowDown in ContentView).
+func (app *App) ScrollContentLineDown(g *gocui.Gui, v *gocui.View) error {
+	// Only scroll if the ContentView actually has focus
+	if cv := g.CurrentView(); cv == nil || cv.Name() != ContentViewName {
+		return nil
+	}
+	return app.scrollContent(g, 1) // Scroll down by 1 line
 }
