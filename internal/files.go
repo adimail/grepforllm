@@ -93,15 +93,15 @@ func (app *App) ListFiles() error {
 
 		// --- Binary File Check (only for files not ignored) ---
 		// Optimization: Stat first to check size?
-		info, err := d.Info()
-		if err != nil {
-			// Error getting file info, skip
-			fmt.Fprintf(os.Stderr, "Warning: Could not get file info for %s: %v\n", path, err)
-			return nil
-		}
-		if info.Size() == 0 { // Skip empty files
-			return nil
-		}
+		// info, err := d.Info()
+		// if err != nil {
+		// 	// Error getting file info, skip
+		// 	fmt.Fprintf(os.Stderr, "Warning: Could not get file info for %s: %v\n", path, err)
+		// 	return nil
+		// }
+		// if info.Size() == 0 { // Skip empty files
+		// 	return nil
+		// }
 		// Optional: Add a max size check here to avoid reading huge files
 		// if info.Size() > MaxFileSizeBytes { return nil }
 
