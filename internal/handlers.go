@@ -32,18 +32,6 @@ func (app *App) SwitchFocus(g *gocui.Gui, v *gocui.View) error {
 		}
 	}
 
-	// Handle FilterView specific logic (Editable state)
-	fv, errFv := g.View(FilterViewName)
-	if errFv == nil { // Only if FilterView exists
-		if nextViewName == FilterViewName {
-			fv.Editable = true
-			app.updateFilterViewContent(g) // Update content and cursor
-		} else {
-			fv.Editable = false
-			app.updateFilterViewContent(g) // Update content (removes cursor potentially)
-		}
-	}
-
 	// Set the new current view
 	if _, err := g.SetCurrentView(nextViewName); err != nil {
 		return err
@@ -79,27 +67,12 @@ func (app *App) FocusContentView(g *gocui.Gui, v *gocui.View) error {
 func (app *App) ToggleHelp(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Lock()
 	app.showHelp = !app.showHelp
-	currentViewName := ""
-	if cv := g.CurrentView(); cv != nil {
-		currentViewName = cv.Name()
-	}
 	app.mutex.Unlock()
 
 	if !app.showHelp {
 		_ = g.DeleteView(HelpViewName)
-		// Determine previous view more robustly
-		previousView := FilesViewName // Default
-		if currentViewName != HelpViewName && currentViewName != "" {
-			// If focus was on Filter or Content before help, return there?
-			// Let's simplify: always return to FilesView when closing help for now.
-			// If FilterView was editable, make it non-editable
-			if fv, err := g.View(FilterViewName); err == nil {
-				fv.Editable = false
-				app.updateFilterViewContent(g) // Update its display
-			}
-		}
+		previousView := FilesViewName
 		_, err := g.SetCurrentView(previousView)
-		// Update layout after setting focus back
 		g.Update(func(g *gocui.Gui) error { return app.Layout(g) })
 		return err
 	} else {
@@ -156,7 +129,7 @@ func (app *App) updateFilterViewContent(g *gocui.Gui) {
 
 	// Handle cursor position only if view is focused and editable
 	if g.CurrentView() == v && v.Editable {
-		cursorPos := len(value) // Place cursor at the end
+		cursorPos := len(value)
 		_ = v.SetCursor(cursorPos, 0)
 
 		// Adjust origin if cursor is out of view horizontally
@@ -175,7 +148,6 @@ func (app *App) updateFilterViewContent(g *gocui.Gui) {
 }
 
 func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
-	// This function remains the same - applies filter, saves cache, returns focus to FilesView
 	if v == nil || v.Name() != FilterViewName {
 		return nil
 	}
@@ -209,27 +181,13 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 			// Optionally update status bar here
 		}
 	}
-	// Unlock mutex before calling applyFilters which acquires it again
-	app.mutex.Unlock()
 
-	// applyFilters acquires lock, filters, updates state, and unlocks
-	app.applyFilters() // This now runs applyFilters without holding the lock from here
+	app.applyFilters()
 
-	// Update UI after filtering is done
 	g.Update(func(g *gocui.Gui) error {
-		// Make filter view non-editable
-		fv, err := g.View(FilterViewName)
-		if err == nil {
-			fv.Editable = false
-			app.updateFilterViewContent(g) // Update display (e.g., remove cursor)
-		}
-
-		// Set focus back to FilesView
 		if _, err := g.SetCurrentView(FilesViewName); err != nil {
 			// Log or handle error
 		}
-
-		// Trigger layout refresh
 		return app.Layout(g)
 	})
 
@@ -237,20 +195,13 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *App) CancelFilter(g *gocui.Gui, v *gocui.View) error {
-	// This function remains the same - cancels filter input, returns focus to FilesView
 	if v == nil || v.Name() != FilterViewName {
 		return nil
 	}
 
-	v.Editable = false
-
-	// Restore the content to the currently active filter value
-	app.updateFilterViewContent(g)
-
-	// Set focus back to FilesView
 	_, err := g.SetCurrentView(FilesViewName)
 	g.Update(func(g *gocui.Gui) error {
-		return app.Layout(g) // Update layout to reflect focus change
+		return app.Layout(g)
 	})
 	return err
 }
@@ -294,10 +245,8 @@ func (app *App) CursorDown(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
-	// This function remains the same - toggles filter mode when FilterView is focused
-	// Note: This binding might need adjustment if it should only work when FilterView is editable
 	if v == nil || v.Name() != FilterViewName {
-		// Or maybe allow toggling even when not editable? Let's keep it tied to FilterView focus.
+		// This keybinding is intended for when the FilterView is active.
 		return nil
 	}
 
@@ -307,27 +256,30 @@ func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
 	} else {
 		app.filterMode = ExcludeMode
 	}
+
 	// Update cache with new mode
 	if app.cacheFilePath != "" {
-		if _, ok := app.cache[app.rootDir]; ok {
+		if _, ok := app.cache[app.rootDir]; ok { // Ensure entry exists
 			currentEntry := app.cache[app.rootDir]
 			currentEntry.FilterMode = app.filterMode
 			currentEntry.LastOpened = time.Now() // Update timestamp
 			app.cache[app.rootDir] = currentEntry
-			// Save immediately? Or wait for ApplyFilter? Let's save.
 			err := saveCache(app.cacheFilePath, app.cache)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to save cache on ToggleFilterMode: %v\n", err)
 			}
 		}
+		// If entry doesn't exist, it will be created on next ApplyFilter or app start.
+		// For now, we only update if it exists.
 	}
 	app.mutex.Unlock()
 
-	// Update the filter view content (text) and title
-	app.updateFilterViewContent(g)
-	// Update the layout to refresh the title
+	// REMOVED: app.updateFilterViewContent(g)
+	// Rely entirely on the Layout refresh to update title and content.
+
+	// Update the layout to refresh the title and content
 	g.Update(func(g *gocui.Gui) error {
-		return app.Layout(g)
+		return app.Layout(g) // Layout will now handle everything
 	})
 
 	return nil
@@ -513,17 +465,6 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 	}
 
 	app.updateStatus(g, statusMsg)
-
-	go func(msg string) {
-		time.Sleep(3 * time.Second)
-		g.Update(func(g *gocui.Gui) error {
-			sv, err := g.View(StatusViewName)
-			if err == nil && strings.HasPrefix(sv.Buffer(), msg) {
-				app.resetStatus(g)
-			}
-			return nil
-		})
-	}(statusMsg)
 
 	return nil
 }

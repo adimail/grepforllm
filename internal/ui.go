@@ -133,34 +133,66 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 
 	// --- Filter View ---
 	if v, err := g.SetView(FilterViewName, 0, filterY0, filesWidth, filterY1, 0); err != nil {
-		if err != gocui.ErrUnknownView {
+		if err != gocui.ErrUnknownView { // This means view was just created
 			return err
 		}
-		v.Editable = false // Initially not editable
+		// Setup for a newly created view
+		v.Editable = true // Will be refined by focus logic below
 		v.Wrap = false
 		v.Editor = gocui.DefaultEditor // Use default editor for input
-		v.FgColor = gocui.ColorCyan    // Default text color
-		// Title set below based on mode
+		v.FgColor = gocui.ColorCyan
+		// Title is set below based on mode
 	}
-	// Always update filter view content/title and frame color
+
+	// Logic for existing or newly created view
 	app.mutex.Lock()
 	modeStr := "Exclude"
-	if app.filterMode == IncludeMode {
-		modeStr = "Include"
-	}
+	currentFilterMode := app.filterMode // Capture state for consistent use in this block
+	currentExcludes := app.excludes
+	currentIncludes := app.includes
 	app.mutex.Unlock()
-	filterV, _ := g.View(FilterViewName)
+
+	filterV, _ := g.View(FilterViewName) // Get the view
 	if filterV != nil {
 		filterV.Title = fmt.Sprintf(" Filter: %s (Ctrl+F: Mode) ", modeStr)
-		if currentViewName == FilterViewName {
-			filterV.FrameColor = gocui.ColorGreen               // Focused
-			filterV.FgColor = gocui.ColorWhite | gocui.AttrBold // Focused text color
-		} else {
-			filterV.FrameColor = gocui.ColorBlue // Not focused
-			filterV.FgColor = gocui.ColorCyan    // Default text color
+		isFilterViewFocused := (currentViewName == FilterViewName)
+
+		if isFilterViewFocused {
+			filterV.FrameColor = gocui.ColorGreen
+			filterV.FgColor = gocui.ColorWhite | gocui.AttrBold
+
+			if !filterV.Editable { // View is gaining focus AND was not previously editable
+				filterV.Editable = true
+				// Populate buffer from app state since it's becoming editable
+				var currentValueText string
+				if currentFilterMode == ExcludeMode {
+					currentValueText = currentExcludes
+				} else {
+					currentValueText = currentIncludes
+				}
+
+				filterV.Clear()
+				fmt.Fprint(filterV, currentValueText)
+				cursorPos := len(currentValueText)
+				_ = filterV.SetCursor(cursorPos, 0)
+
+				// Adjust origin if cursor is out of view horizontally
+				maxXSize, _ := filterV.Size()
+				ox, _ := filterV.Origin()
+				if cursorPos < ox {
+					_ = filterV.SetOrigin(cursorPos, 0)
+				} else if cursorPos >= ox+maxXSize {
+					_ = filterV.SetOrigin(cursorPos-maxXSize+1, 0)
+				}
+			}
+		} else { // Filter view is NOT focused
+			filterV.FrameColor = gocui.ColorBlue
+			filterV.FgColor = gocui.ColorCyan
+			if filterV.Editable {
+				filterV.Editable = false
+			}
+			app.updateFilterViewContent(g)
 		}
-		// Update content/cursor state (handles editable vs non-editable)
-		app.updateFilterViewContent(g)
 	}
 
 	// --- Content View ---
@@ -539,7 +571,6 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 // --- Status Bar Functions ---
 
 func (app *App) updateStatus(g *gocui.Gui, message string) {
-	// This function remains the same
 	g.Update(func(g *gocui.Gui) error {
 		v, err := g.View(StatusViewName)
 		if err == nil {
@@ -554,7 +585,6 @@ func (app *App) updateStatus(g *gocui.Gui, message string) {
 }
 
 // resetStatus sets the default status bar text for the normal file browser view.
-// NOW INCLUDES CHARACTER AND TOKEN COUNTS FOR SELECTED FILES.
 func (app *App) resetStatus(g *gocui.Gui) {
 	g.Update(func(g *gocui.Gui) error {
 		v, err := g.View(StatusViewName)
