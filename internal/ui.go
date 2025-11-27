@@ -9,69 +9,59 @@ import (
 	"github.com/awesome-gocui/gocui"
 )
 
-// Layout decides which UI layout to render based on app state.
 func (app *App) Layout(g *gocui.Gui) error {
 	app.mutex.Lock()
 	showCache := app.showCacheView
-	showHelp := app.showHelp // Need help state for main layout too
+	showHelp := app.showHelp
 	isLoading := app.isLoading
 	loadingError := app.loadingError
 	app.mutex.Unlock()
 
-	// --- Loading State Handling ---
-	// Display loading indicator or error *before* attempting main layout
 	if isLoading {
 		return app.layoutLoadingView(g)
 	}
 	if loadingError != nil {
 		return app.layoutErrorView(g, loadingError)
 	}
-	// --- End Loading State Handling ---
 
 	if showCache {
-		return app.layoutCacheView(g) // Cache view takes precedence
+		return app.layoutCacheView(g)
 	} else if showHelp {
-		// Render main layout first, then overlay help
 		_ = app.GrepApplicationView(g)
-		return app.layoutHelpView(g) // Help view overlays main view
+		return app.layoutHelpView(g)
 	} else {
-		// Ensure help view is deleted if it exists and shouldn't be open
-		// This needs to happen *before* setting focus back in GrepApplicationView
 		if _, err := g.View(HelpViewName); err == nil {
 			_ = g.DeleteView(HelpViewName)
 		}
-		return app.GrepApplicationView(g) // Normal view
+		return app.GrepApplicationView(g)
 	}
 }
 
-// GrepApplicationView renders the standard file browser UI.
 func (app *App) GrepApplicationView(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
 
-	// Ensure modal views (except help, handled in Layout) are gone
 	_ = g.DeleteView(CacheViewName)
-	_ = g.DeleteView("loading") // Ensure loading view is gone
-	_ = g.DeleteView("error")   // Ensure error view is gone
+	_ = g.DeleteView("loading")
+	_ = g.DeleteView("error")
 
 	filesWidth := maxX / 3
 	pathHeight := 2
 	filterHeight := 3
-	statusBarHeight := 2 // Status bar takes 2 lines now
+	statusBarHeight := 2
 
-	// --- Y coordinates ---
 	pathY0 := 0
-	pathY1 := pathY0 + pathHeight // Occupies lines 0, 1
+	pathY1 := pathY0 + pathHeight
 
-	filesY0 := pathY1 + 1                                // Starts at line 2
-	filesViewY1 := maxY - statusBarHeight - filterHeight // Ends before filter and status
+	filesY0 := pathY1 + 1
+	filesViewY1 := maxY - statusBarHeight - filterHeight
 
-	filterY0 := filesViewY1 + 1             // Starts below files
-	filterY1 := filterY0 + filterHeight - 1 // Ends before status
+	filterY0 := filesViewY1 + 1
+	filterY1 := filterY0 + filterHeight - 1
 
-	contentViewY1 := maxY - statusBarHeight // Content ends before status bar
+	contentViewY1 := maxY - statusBarHeight
 
-	statusBarY0 := maxY - statusBarHeight // Status starts
-	statusBarY1 := maxY                   // Status ends at bottom
+	statusBarY0 := maxY - statusBarHeight
+	statusBarY1 := maxY
 
 	currentView := g.CurrentView()
 	currentViewName := ""
@@ -79,7 +69,6 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 		currentViewName = currentView.Name()
 	}
 
-	// --- Path View ---
 	if pv, err := g.SetView(PathViewName, 0, pathY0, filesWidth, pathY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -88,71 +77,62 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 		pv.Editable = false
 		pv.Wrap = false
 		pv.Frame = true
-		pv.FrameColor = gocui.ColorBlue // Path view never focused
+		pv.FrameColor = gocui.ColorBlue
 		pv.FgColor = gocui.ColorMagenta
-		pv.Clear() // Clear before writing
+		pv.Clear()
 		fmt.Fprint(pv, app.rootDir)
 	} else {
-		// Update content if needed (e.g., if rootDir could change - not currently possible)
 		pv.Clear()
 		fmt.Fprint(pv, app.rootDir)
 	}
 
-	// --- Files View ---
 	if v, err := g.SetView(FilesViewName, 0, filesY0, filesWidth, filesViewY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = " Files " // Title updated in refreshFilesView
+		v.Title = " Files "
 		v.Highlight = true
-		v.SelBgColor = gocui.ColorDefault               // Background for selected line
-		v.SelFgColor = gocui.ColorCyan | gocui.AttrBold // Foreground for selected line
+		v.SelBgColor = gocui.ColorDefault
+		v.SelFgColor = gocui.ColorCyan | gocui.AttrBold
 		v.Editable = false
 		v.Wrap = false
-		v.Autoscroll = false // We handle scrolling manually
+		v.Autoscroll = false
 
-		// Set initial focus if needed (e.g., on startup or returning from cache)
-		// Help view focus is handled in Layout()
 		if g.CurrentView() == nil || currentViewName == CacheViewName {
 			if _, err := g.SetCurrentView(FilesViewName); err != nil {
 				return err
 			}
-			currentViewName = FilesViewName // Update local tracker
+			currentViewName = FilesViewName
 		}
 	}
-	// Always refresh files view content and update frame color based on focus
-	app.refreshFilesView(g) // Refreshes content and title
+	app.refreshFilesView(g)
 	fv, _ := g.View(FilesViewName)
-	if fv != nil { // Check if view exists before setting color
+	if fv != nil {
 		if currentViewName == FilesViewName {
-			fv.FrameColor = gocui.ColorGreen // Focused
+			fv.FrameColor = gocui.ColorGreen
 		} else {
-			fv.FrameColor = gocui.ColorBlue // Not focused
+			fv.FrameColor = gocui.ColorBlue
 		}
 	}
 
-	// --- Filter View ---
 	if v, err := g.SetView(FilterViewName, 0, filterY0, filesWidth, filterY1, 0); err != nil {
-		if err != gocui.ErrUnknownView { // This means view was just created
+		if err != gocui.ErrUnknownView {
 			return err
 		}
-		// Setup for a newly created view
-		v.Editable = true // Will be refined by focus logic below
+		v.Editable = true
 		v.Wrap = false
-		v.Editor = gocui.DefaultEditor // Use default editor for input
+		v.Editor = gocui.DefaultEditor
 		v.FgColor = gocui.ColorCyan
-		// Title is set below based on mode
 	}
 
-	// Logic for existing or newly created view
 	app.mutex.Lock()
 	modeStr := "Exclude"
-	currentFilterMode := app.filterMode // Capture state for consistent use in this block
+	currentFilterMode := app.filterMode
 	currentExcludes := app.excludes
 	currentIncludes := app.includes
 	app.mutex.Unlock()
 
-	filterV, _ := g.View(FilterViewName) // Get the view
+	filterV, _ := g.View(FilterViewName)
 	if filterV != nil {
 		filterV.Title = fmt.Sprintf(" Filter: %s (Ctrl+F: Mode) ", modeStr)
 		isFilterViewFocused := (currentViewName == FilterViewName)
@@ -161,9 +141,8 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 			filterV.FrameColor = gocui.ColorGreen
 			filterV.FgColor = gocui.ColorWhite | gocui.AttrBold
 
-			if !filterV.Editable { // View is gaining focus AND was not previously editable
+			if !filterV.Editable {
 				filterV.Editable = true
-				// Populate buffer from app state since it's becoming editable
 				var currentValueText string
 				if currentFilterMode == ExcludeMode {
 					currentValueText = currentExcludes
@@ -176,7 +155,6 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 				cursorPos := len(currentValueText)
 				_ = filterV.SetCursor(cursorPos, 0)
 
-				// Adjust origin if cursor is out of view horizontally
 				maxXSize, _ := filterV.Size()
 				ox, _ := filterV.Origin()
 				if cursorPos < ox {
@@ -185,7 +163,7 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 					_ = filterV.SetOrigin(cursorPos-maxXSize+1, 0)
 				}
 			}
-		} else { // Filter view is NOT focused
+		} else {
 			filterV.FrameColor = gocui.ColorBlue
 			filterV.FgColor = gocui.ColorCyan
 			if filterV.Editable {
@@ -195,31 +173,28 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 		}
 	}
 
-	// --- Content View ---
 	contentX0 := filesWidth + 1
-	contentY0 := 0 // Content view starts at the top now
+	contentY0 := 0
 	if v, err := g.SetView(ContentViewName, contentX0, contentY0, maxX-1, contentViewY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = " Content " // Title updated in refreshContentView
+		v.Title = " Content "
 		v.Editable = false
-		v.Wrap = true        // Enable wrapping for content
-		v.Autoscroll = false // We handle scrolling
+		v.Wrap = true
+		v.Autoscroll = false
 		v.Frame = true
 	}
-	// Always refresh content view and update frame color
-	app.refreshContentView(g) // Refreshes content and title
+	app.refreshContentView(g)
 	cv, _ := g.View(ContentViewName)
 	if cv != nil {
 		if currentViewName == ContentViewName {
-			cv.FrameColor = gocui.ColorGreen // Focused
+			cv.FrameColor = gocui.ColorGreen
 		} else {
-			cv.FrameColor = gocui.ColorBlue // Not focused
+			cv.FrameColor = gocui.ColorBlue
 		}
 	}
 
-	// --- Status Bar ---
 	if v, err := g.SetView(StatusViewName, 0, statusBarY0, maxX-1, statusBarY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
@@ -228,20 +203,18 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 		v.Editable = false
 		v.Wrap = false
 		v.FgColor = gocui.ColorWhite
-		v.BgColor = gocui.ColorDefault // Or maybe ColorBlue? Default is usually fine.
+		v.BgColor = gocui.ColorDefault
 	}
-	// Always reset status unless awaiting cache confirmation
 	app.mutex.Lock()
 	awaitingConfirm := app.awaitingCacheClearConfirmation
 	app.mutex.Unlock()
 	if !awaitingConfirm {
-		app.resetStatus(g) // Update status bar text (NOW INCLUDES COUNTS)
+		app.resetStatus(g)
 	}
 
 	return nil
 }
 
-// layoutHelpView renders the help overlay. Assumes GrepApplicationView was called first.
 func (app *App) layoutHelpView(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
 	helpWidth := maxX * 2 / 3
@@ -257,9 +230,8 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		v.Wrap = true
 		v.Editable = false
 		v.Frame = true
-		v.FgColor = gocui.ColorWhite // Text color for help
+		v.FgColor = gocui.ColorWhite
 
-		// --- Updated Help Text ---
 		v.Clear()
 		fmt.Fprintln(v, "grepforllm - Select & Copy File Contents")
 		fmt.Fprintln(v, "----------------------------------------")
@@ -281,7 +253,6 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		fmt.Fprintln(v, "  ↓ / j         : Scroll content DOWN one line (when focused)")
 		fmt.Fprintln(v, "  PgUp / Ctrl+B : Scroll content UP one page (works globally)")
 		fmt.Fprintln(v, "  PgDn          : Scroll content DOWN one page (works globally)")
-		// fmt.Fprintln(v, "  Esc           : Return focus to Files View (Optional - Not bound by default)")
 		fmt.Fprintln(v, "\nFilter View (Bottom-Left):")
 		fmt.Fprintln(v, "  (Type patterns: *.go, cmd/, file.txt)")
 		fmt.Fprintln(v, "  Enter         : Apply filter & return focus to Files")
@@ -293,43 +264,36 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		fmt.Fprintln(v, "  Ctrl+D        : Prompt to clear cache")
 		fmt.Fprintln(v, "  y / n         : Confirm / Cancel cache clear")
 		fmt.Fprintln(v, "  Esc / q       : Close Cache View")
-		// --- End Updated Help Text ---
 
-		// Set focus to Help view when it's created
 		if _, err := g.SetCurrentView(HelpViewName); err != nil {
 			return err
 		}
-		v.FrameColor = gocui.ColorGreen // Focused color
+		v.FrameColor = gocui.ColorGreen
 	} else {
-		// If view exists, ensure it's focused and has the right color
 		if g.CurrentView() != v {
 			if _, err := g.SetCurrentView(HelpViewName); err != nil {
 				return err
 			}
 		}
-		v.FrameColor = gocui.ColorGreen // Focused color
+		v.FrameColor = gocui.ColorGreen
 	}
 	return nil
 }
 
-// layoutCacheView renders the cache content view.
 func (app *App) layoutCacheView(g *gocui.Gui) error {
-	// This function remains the same - shows cache content, status bar for cache
 	maxX, maxY := g.Size()
 
-	// --- Delete normal views ---
 	viewsToDelete := []string{
 		FilesViewName, ContentViewName, FilterViewName, PathViewName,
-		HelpViewName, // Also delete help if it was open
-		"loading",    // Also delete loading/error views
+		HelpViewName,
+		"loading",
 		"error",
 	}
 	for _, viewName := range viewsToDelete {
-		_ = g.DeleteView(viewName) // Ignore ErrUnknownView
+		_ = g.DeleteView(viewName)
 	}
 
-	// --- Cache View ---
-	cacheViewY1 := maxY - 2 // Leave space for status bar
+	cacheViewY1 := maxY - 2
 
 	app.mutex.Lock()
 	cacheContent := app.cacheViewContent
@@ -364,7 +328,6 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 		if g.CurrentView() == cv {
 			cv.FrameColor = gocui.ColorGreen
 		} else {
-			// This case shouldn't happen if focus logic is correct
 			if _, err := g.SetCurrentView(CacheViewName); err == nil {
 				cv.FrameColor = gocui.ColorGreen
 			} else {
@@ -373,7 +336,6 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 		}
 	}
 
-	// --- Status Bar ---
 	statusBarY0 := maxY - 2
 	statusBarY1 := maxY
 
@@ -386,12 +348,10 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 		sv.Wrap = false
 		sv.FgColor = gocui.ColorWhite
 		sv.BgColor = gocui.ColorDefault
-		// Set initial status for cache view
 		if !awaitingConfirm {
 			app.resetStatusForCacheView(g)
-		} // else: PromptClearCache will set the status
+		}
 	} else {
-		// Update status if not awaiting confirmation
 		if !awaitingConfirm {
 			app.resetStatusForCacheView(g)
 		}
@@ -400,9 +360,7 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 	return nil
 }
 
-// refreshFilesView updates the content and appearance of the Files view.
 func (app *App) refreshFilesView(g *gocui.Gui) {
-	// This function remains the same - displays files, selection, handles copy highlight
 	v, err := g.View(FilesViewName)
 	if err != nil {
 		return
@@ -449,12 +407,11 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 
 		switch {
 		case isCopyHighlightActive && isSelected:
-			fmt.Fprintf(v, "\x1b[7m%s\x1b[0m\n", line) // Inverse video for copy highlight
+			fmt.Fprintf(v, "\x1b[7m%s\x1b[0m\n", line)
 		case isCurrent:
-			// Let gocui handle highlighting the current line via SelFgColor/SelBgColor
 			fmt.Fprintln(v, line)
 		case isSelected:
-			fmt.Fprintf(v, "\x1b[32m%s\x1b[0m\n", line) // Green text for selected (not current)
+			fmt.Fprintf(v, "\x1b[32m%s\x1b[0m\n", line)
 		default:
 			fmt.Fprintln(v, line)
 		}
@@ -466,15 +423,12 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		_ = v.SetCursor(0, 0)
 	}
 
-	app.adjustFilesViewScroll(g, v) // Ensure cursor is visible
+	app.adjustFilesViewScroll(g, v)
 
-	// Refresh status bar whenever files view is refreshed, as selection count might change
 	app.resetStatus(g)
 }
 
-// refreshContentView updates the content view with the file under the cursor.
 func (app *App) refreshContentView(g *gocui.Gui) {
-	// This function remains the same - shows content of file at app.currentLine
 	v, err := g.View(ContentViewName)
 	if err != nil {
 		return
@@ -534,13 +488,8 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 
 	app.mutex.Lock()
 	app.currentlyPreviewedFile = fileToPreviewRelPath
-	// Don't update contentViewOriginY here, it's updated by scroll handlers
-	// If we reset scroll, newOriginY is 0, otherwise it's the old value.
-	// The actual application of the origin happens below.
 	app.mutex.Unlock()
 
-	// Apply the calculated origin (either 0 for new file, or previous origin)
-	// Need to calculate maxOy based on the *new* buffer content
 	_, viewHeight := v.Size()
 	bufferLines := strings.Count(v.ViewBuffer(), "\n") + 1
 	maxOy := max(0, bufferLines-viewHeight)
@@ -548,27 +497,22 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		newOriginY = maxOy
 	}
 
-	err = v.SetOrigin(0, newOriginY) // Set horizontal origin to 0
+	err = v.SetOrigin(0, newOriginY)
 	if err != nil {
 		_ = v.SetOrigin(0, 0)
-		// If origin setting failed, reset the stored state too
-		if resetScroll { // Only reset state if we intended to reset scroll
-			app.mutex.Lock()
-			app.contentViewOriginY = 0
-			app.mutex.Unlock()
-		}
-	} else {
-		// If origin setting succeeded *and* we reset scroll, update state
 		if resetScroll {
 			app.mutex.Lock()
 			app.contentViewOriginY = 0
 			app.mutex.Unlock()
 		}
-		// If we didn't reset scroll, app.contentViewOriginY already holds the correct value
+	} else {
+		if resetScroll {
+			app.mutex.Lock()
+			app.contentViewOriginY = 0
+			app.mutex.Unlock()
+		}
 	}
 }
-
-// --- Status Bar Functions ---
 
 func (app *App) updateStatus(g *gocui.Gui, message string) {
 	g.Update(func(g *gocui.Gui) error {
@@ -576,7 +520,7 @@ func (app *App) updateStatus(g *gocui.Gui, message string) {
 		if err == nil {
 			v.Clear()
 			fmt.Fprint(v, message)
-			v.Rewind() // Ensure message starts from the beginning if it's long
+			v.Rewind()
 		} else if err != gocui.ErrUnknownView {
 			return err
 		}
@@ -584,72 +528,18 @@ func (app *App) updateStatus(g *gocui.Gui, message string) {
 	})
 }
 
-// resetStatus sets the default status bar text for the normal file browser view.
 func (app *App) resetStatus(g *gocui.Gui) {
 	g.Update(func(g *gocui.Gui) error {
 		v, err := g.View(StatusViewName)
 		if err != nil && err != gocui.ErrUnknownView {
-			return err // Return actual error if not ErrUnknownView
+			return err
 		}
 		if err == gocui.ErrUnknownView {
-			return nil // View doesn't exist yet, nothing to do
+			return nil
 		}
-
-		// --- Calculate Character and Token Counts ---
-		app.mutex.Lock()
-		// Copy needed state under lock
-		selectedFilesCopy := make(map[string]bool, len(app.selectedFiles))
-		for k, v := range app.selectedFiles {
-			selectedFilesCopy[k] = v
-		}
-		rootDirCopy := app.rootDir
-		tokenizer := app.tokenizer // Assuming tokenizer is thread-safe or immutable after init
-		app.mutex.Unlock()
-
-		totalChars := 0
-		totalTokens := 0
-		readErrors := 0
-
-		if tokenizer == nil {
-			// Handle case where tokenizer might not be initialized (shouldn't happen)
-			fmt.Fprintf(os.Stderr, "Warning: Tokenizer not initialized in resetStatus\n")
-		} else {
-			for relPath := range selectedFilesCopy {
-				fullPath := filepath.Join(rootDirCopy, relPath)
-				contentBytes, readErr := os.ReadFile(fullPath)
-				if readErr != nil {
-					// Log error or just count them? Let's count for now.
-					// log.Printf("Warning: Failed to read file %s for status count: %v", fullPath, readErr)
-					readErrors++
-					continue // Skip this file
-				}
-
-				// Count characters (bytes)
-				totalChars += len(contentBytes)
-
-				// Count tokens
-				// Use Encode with suppress_special_tokens=True, allowed_special="all" equivalent if needed
-				// For basic counting, default Encode is usually fine.
-				tokens := tokenizer.Encode(string(contentBytes), nil, nil)
-				if err != nil {
-					// Log tokenizer error?
-					// log.Printf("Warning: Failed to tokenize file %s: %v", fullPath, err)
-					readErrors++ // Count as error if tokenization fails
-					continue
-				}
-				totalTokens += len(tokens)
-			}
-		}
-		// --- End Calculation ---
 
 		v.Clear()
-		// Format the status string with counts and keybindings
-		statusFormat := "Chars: %d | Tokens: %d%s || ?: Help | q: Quit"
-		errorStr := ""
-		if readErrors > 0 {
-			errorStr = fmt.Sprintf(" (%d read err)", readErrors)
-		}
-		statusText := fmt.Sprintf(statusFormat, totalChars, totalTokens, errorStr)
+		statusText := "?: Help | q: Quit"
 
 		fmt.Fprint(v, statusText)
 		v.Rewind()
@@ -658,9 +548,7 @@ func (app *App) resetStatus(g *gocui.Gui) {
 	})
 }
 
-// resetStatusForCacheView sets the default status bar text for the cache view.
 func (app *App) resetStatusForCacheView(g *gocui.Gui) {
-	// This function remains the same
 	g.Update(func(g *gocui.Gui) error {
 		v, err := g.View(StatusViewName)
 		if err == nil {
@@ -674,17 +562,12 @@ func (app *App) resetStatusForCacheView(g *gocui.Gui) {
 	})
 }
 
-// refreshViews is a convenience function
 func (app *App) refreshViews(g *gocui.Gui) {
 	g.Update(func(g *gocui.Gui) error {
 		app.refreshFilesView(g)
-		// Content view refreshes on cursor move now
-		// Status bar is refreshed by refreshFilesView
 		return nil
 	})
 }
-
-// --- Loading and Error Layouts ---
 
 func (app *App) layoutLoadingView(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
@@ -738,7 +621,6 @@ func (app *App) layoutErrorView(g *gocui.Gui, loadErr error) error {
 		for _, line := range msgLines {
 			fmt.Fprintln(v, line)
 		}
-		// Set focus to error view so Ctrl+Q works easily
 		if _, err := g.SetCurrentView("error"); err != nil {
 			return err
 		}
