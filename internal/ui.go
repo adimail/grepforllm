@@ -44,24 +44,26 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 	_ = g.DeleteView("loading")
 	_ = g.DeleteView("error")
 
+	app.mutex.Lock()
+	mode := app.filterMode
+	app.mutex.Unlock()
+
 	filesWidth := maxX / 3
 	pathHeight := 2
-	filterHeight := 3
 	statusBarHeight := 2
+	filterHeight := 3
 
 	pathY0 := 0
 	pathY1 := pathY0 + pathHeight
 
+	var filesViewY1 int
+	if mode == IncludeMode {
+		filesViewY1 = maxY - statusBarHeight - (filterHeight * 2)
+	} else {
+		filesViewY1 = maxY - statusBarHeight - filterHeight
+	}
+
 	filesY0 := pathY1 + 1
-	filesViewY1 := maxY - statusBarHeight - filterHeight
-
-	filterY0 := filesViewY1 + 1
-	filterY1 := filterY0 + filterHeight - 1
-
-	contentViewY1 := maxY - statusBarHeight
-
-	statusBarY0 := maxY - statusBarHeight
-	statusBarY1 := maxY
 
 	currentView := g.CurrentView()
 	currentViewName := ""
@@ -91,9 +93,7 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 			return err
 		}
 		v.Title = " Files "
-		v.Highlight = true
-		v.SelBgColor = gocui.ColorDefault
-		v.SelFgColor = gocui.ColorCyan | gocui.AttrBold
+		v.Highlight = false
 		v.Editable = false
 		v.Wrap = false
 		v.Autoscroll = false
@@ -115,67 +115,73 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 		}
 	}
 
-	if v, err := g.SetView(FilterViewName, 0, filterY0, filesWidth, filterY1, 0); err != nil {
-		if err != gocui.ErrUnknownView {
-			return err
+	if mode == IncludeMode {
+		incY0 := filesViewY1 + 1
+		incY1 := incY0 + filterHeight - 1
+		if v, err := g.SetView(FilterIncludeViewName, 0, incY0, filesWidth, incY1, 0); err != nil {
+			if err != gocui.ErrUnknownView {
+				return err
+			}
+			v.Title = " Filter: Include (Ctrl+F: Mode) "
+			v.Editable = true
+			v.Editor = gocui.DefaultEditor
+			app.mutex.Lock()
+			v.Clear()
+			fmt.Fprint(v, app.includes)
+			app.mutex.Unlock()
 		}
-		v.Editable = true
-		v.Wrap = false
-		v.Editor = gocui.DefaultEditor
-		v.FgColor = gocui.ColorCyan
+		excY0 := incY1 + 1
+		excY1 := excY0 + filterHeight - 1
+		if v, err := g.SetView(FilterExcludeViewName, 0, excY0, filesWidth, excY1, 0); err != nil {
+			if err != gocui.ErrUnknownView {
+				return err
+			}
+			v.Title = " Filter: Exclude "
+			v.Editable = true
+			v.Editor = gocui.DefaultEditor
+			app.mutex.Lock()
+			v.Clear()
+			fmt.Fprint(v, app.excludes)
+			app.mutex.Unlock()
+		}
+		_ = g.DeleteView("filter")
+	} else {
+		excY0 := filesViewY1 + 1
+		excY1 := excY0 + filterHeight - 1
+		if v, err := g.SetView(FilterExcludeViewName, 0, excY0, filesWidth, excY1, 0); err != nil {
+			if err != gocui.ErrUnknownView {
+				return err
+			}
+			v.Title = " Filter: Exclude (Ctrl+F: Mode) "
+			v.Editable = true
+			v.Editor = gocui.DefaultEditor
+			app.mutex.Lock()
+			v.Clear()
+			fmt.Fprint(v, app.excludes)
+			app.mutex.Unlock()
+		}
+		_ = g.DeleteView(FilterIncludeViewName)
 	}
 
-	app.mutex.Lock()
-	modeStr := "Exclude"
-	currentFilterMode := app.filterMode
-	currentExcludes := app.excludes
-	currentIncludes := app.includes
-	app.mutex.Unlock()
-
-	filterV, _ := g.View(FilterViewName)
-	if filterV != nil {
-		filterV.Title = fmt.Sprintf(" Filter: %s (Ctrl+F: Mode) ", modeStr)
-		isFilterViewFocused := (currentViewName == FilterViewName)
-
-		if isFilterViewFocused {
-			filterV.FrameColor = gocui.ColorGreen
-			filterV.FgColor = gocui.ColorWhite | gocui.AttrBold
-
-			if !filterV.Editable {
-				filterV.Editable = true
-				var currentValueText string
-				if currentFilterMode == ExcludeMode {
-					currentValueText = currentExcludes
-				} else {
-					currentValueText = currentIncludes
-				}
-
-				filterV.Clear()
-				fmt.Fprint(filterV, currentValueText)
-				cursorPos := len(currentValueText)
-				_ = filterV.SetCursor(cursorPos, 0)
-
-				maxXSize, _ := filterV.Size()
-				ox, _ := filterV.Origin()
-				if cursorPos < ox {
-					_ = filterV.SetOrigin(cursorPos, 0)
-				} else if cursorPos >= ox+maxXSize {
-					_ = filterV.SetOrigin(cursorPos-maxXSize+1, 0)
-				}
+	for _, vName := range []string{FilterIncludeViewName, FilterExcludeViewName} {
+		if v, err := g.View(vName); err == nil {
+			if currentViewName == vName {
+				v.FrameColor = gocui.ColorGreen
+				v.FgColor = gocui.ColorWhite | gocui.AttrBold
+				v.Editable = true
+			} else {
+				v.FrameColor = gocui.ColorBlue
+				v.FgColor = gocui.ColorCyan
+				v.Editable = false
 			}
-		} else {
-			filterV.FrameColor = gocui.ColorBlue
-			filterV.FgColor = gocui.ColorCyan
-			if filterV.Editable {
-				filterV.Editable = false
-			}
-			app.updateFilterViewContent(g)
 		}
 	}
+
+	app.updateFilterViewContent(g)
 
 	contentX0 := filesWidth + 1
 	contentY0 := 0
-	if v, err := g.SetView(ContentViewName, contentX0, contentY0, maxX-1, contentViewY1, 0); err != nil {
+	if v, err := g.SetView(ContentViewName, contentX0, contentY0, maxX-1, maxY-statusBarHeight, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
@@ -195,7 +201,7 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 		}
 	}
 
-	if v, err := g.SetView(StatusViewName, 0, statusBarY0, maxX-1, statusBarY1, 0); err != nil {
+	if v, err := g.SetView(StatusViewName, 0, maxY-statusBarHeight, maxX-1, maxY, 0); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
@@ -205,12 +211,7 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 		v.FgColor = gocui.ColorWhite
 		v.BgColor = gocui.ColorDefault
 	}
-	app.mutex.Lock()
-	awaitingConfirm := app.awaitingCacheClearConfirmation
-	app.mutex.Unlock()
-	if !awaitingConfirm {
-		app.resetStatus(g)
-	}
+	app.resetStatus(g)
 
 	return nil
 }
@@ -284,7 +285,7 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
 
 	viewsToDelete := []string{
-		FilesViewName, ContentViewName, FilterViewName, PathViewName,
+		FilesViewName, ContentViewName, FilterIncludeViewName, FilterExcludeViewName, PathViewName,
 		HelpViewName,
 		"loading",
 		"error",
@@ -409,7 +410,7 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		case isCopyHighlightActive && isSelected:
 			fmt.Fprintf(v, "\x1b[7m%s\x1b[0m\n", line)
 		case isCurrent:
-			fmt.Fprintln(v, line)
+			fmt.Fprintf(v, "\x1b[34;1m%s\x1b[0m\n", line)
 		case isSelected:
 			fmt.Fprintf(v, "\x1b[32m%s\x1b[0m\n", line)
 		default:

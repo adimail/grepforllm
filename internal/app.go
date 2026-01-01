@@ -11,17 +11,18 @@ import (
 )
 
 const (
-	PathViewName     = "path"
-	FilesViewName    = "files"
-	ContentViewName  = "content"
-	HelpViewName     = "help"
-	FilterViewName   = "filter"
-	StatusViewName   = "status"
-	CacheViewName    = "cache"
-	ConfirmViewName  = "confirm"
-	DefaultExcludes  = ".git/,node_modules/"
-	MaxSelectedFiles = 50
-	MaxFileSizeBytes = 100 * 1024
+	PathViewName          = "path"
+	FilesViewName         = "files"
+	ContentViewName       = "content"
+	HelpViewName          = "help"
+	FilterIncludeViewName = "filter_include"
+	FilterExcludeViewName = "filter_exclude"
+	StatusViewName        = "status"
+	CacheViewName         = "cache"
+	ConfirmViewName       = "confirm"
+	DefaultExcludes       = ".git/,node_modules/"
+	MaxSelectedFiles      = 50
+	MaxFileSizeBytes      = 100 * 1024
 )
 
 type FilterMode int
