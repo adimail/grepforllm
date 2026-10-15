@@ -41,19 +41,40 @@ const (
 	SortByModTime
 )
 
+type GitStatus int
+
+const (
+	GitClean GitStatus = iota
+	GitModified
+	GitUntracked
+	GitStaged
+)
+
+type GitFilterMode int
+
+const (
+	GitFilterAll GitFilterMode = iota
+	GitFilterChanged
+	GitFilterModified
+	GitFilterUntracked
+	GitFilterStaged
+)
+
 type FileItem struct {
 	RelPath         string
 	SizeBytes       int64
 	ModTime         time.Time
 	EstimatedTokens int
+	GitStatus       GitStatus
 }
 
 type DirectoryCache struct {
-	Includes   string     `json:"includes"`
-	Excludes   string     `json:"excludes"`
-	LastOpened time.Time  `json:"lastOpened"`
-	FilterMode FilterMode `json:"filterMode"`
-	SortMode   SortMode   `json:"sortMode,omitempty"`
+	Includes      string        `json:"includes"`
+	Excludes      string        `json:"excludes"`
+	LastOpened    time.Time     `json:"lastOpened"`
+	FilterMode    FilterMode    `json:"filterMode"`
+	SortMode      SortMode      `json:"sortMode,omitempty"`
+	GitFilterMode GitFilterMode `json:"gitFilterMode,omitempty"`
 }
 
 type AppCache map[string]DirectoryCache
@@ -69,6 +90,8 @@ type App struct {
 	showHelp         bool
 	filterMode       FilterMode
 	sortMode         SortMode
+	gitFilterMode    GitFilterMode
+	gitStatusMap     map[string]GitStatus
 	excludes         string
 	includes         string
 	searchQuery      string
@@ -106,6 +129,8 @@ func NewApp(rootDir string) *App {
 		showHelp:               false,
 		filterMode:             ExcludeMode,
 		sortMode:               SortByName,
+		gitFilterMode:          GitFilterAll,
+		gitStatusMap:           make(map[string]GitStatus),
 		excludes:               DefaultExcludes,
 		includes:               "",
 		searchQuery:            "",
@@ -144,15 +169,17 @@ func NewApp(rootDir string) *App {
 			app.excludes = entry.Excludes
 			app.filterMode = entry.FilterMode
 			app.sortMode = entry.SortMode
+			app.gitFilterMode = entry.GitFilterMode
 			entry.LastOpened = time.Now()
 			app.cache[app.rootDir] = entry
 		} else {
 			app.cache[app.rootDir] = DirectoryCache{
-				Includes:   app.includes,
-				Excludes:   app.excludes,
-				LastOpened: time.Now(),
-				FilterMode: app.filterMode,
-				SortMode:   app.sortMode,
+				Includes:      app.includes,
+				Excludes:      app.excludes,
+				LastOpened:    time.Now(),
+				FilterMode:    app.filterMode,
+				SortMode:      app.sortMode,
+				GitFilterMode: app.gitFilterMode,
 			}
 		}
 

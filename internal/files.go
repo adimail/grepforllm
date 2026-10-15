@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -64,8 +65,50 @@ var binaryExtensions = map[string]bool{
 	".wasm":    true,
 }
 
+func (app *App) loadGitStatus() map[string]GitStatus {
+	statusMap := make(map[string]GitStatus)
+	cmd := exec.Command("git", "status", "--porcelain", "-uall")
+	cmd.Dir = app.rootDir
+	out, err := cmd.Output()
+	if err != nil {
+		return statusMap
+	}
+
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if len(line) < 4 {
+			continue
+		}
+		code := line[:2]
+		pathPart := strings.TrimSpace(line[3:])
+		if strings.HasPrefix(pathPart, "\"") && strings.HasSuffix(pathPart, "\"") && len(pathPart) >= 2 {
+			pathPart = pathPart[1 : len(pathPart)-1]
+		}
+		if idx := strings.Index(pathPart, " -> "); idx != -1 {
+			pathPart = pathPart[idx+4:]
+		}
+		pathPart = filepath.ToSlash(pathPart)
+
+		var status GitStatus
+		if code == "??" {
+			status = GitUntracked
+		} else if code[0] == 'M' || code[1] == 'M' || code[0] == 'D' || code[1] == 'D' {
+			status = GitModified
+		} else if code[0] == 'A' || code[0] == 'R' || code[0] == 'C' {
+			status = GitStaged
+		} else {
+			status = GitModified
+		}
+		statusMap[pathPart] = status
+	}
+	return statusMap
+}
+
 func (app *App) ListFiles() error {
+	gitStatusMap := app.loadGitStatus()
+
 	app.mutex.Lock()
+	app.gitStatusMap = gitStatusMap
 
 	var files []FileItem
 	err := filepath.WalkDir(app.rootDir, func(path string, d fs.DirEntry, err error) error {
@@ -140,11 +183,14 @@ func (app *App) ListFiles() error {
 			tokens = 1
 		}
 
+		status := gitStatusMap[relPathSlash]
+
 		files = append(files, FileItem{
 			RelPath:         relPathSlash,
 			SizeBytes:       size,
 			ModTime:         info.ModTime(),
 			EstimatedTokens: tokens,
+			GitStatus:       status,
 		})
 
 		return nil
@@ -181,6 +227,25 @@ func (app *App) applyFilters() {
 
 		if query != "" && !strings.Contains(strings.ToLower(file.RelPath), query) {
 			continue
+		}
+
+		switch app.gitFilterMode {
+		case GitFilterChanged:
+			if file.GitStatus == GitClean {
+				continue
+			}
+		case GitFilterModified:
+			if file.GitStatus != GitModified {
+				continue
+			}
+		case GitFilterUntracked:
+			if file.GitStatus != GitUntracked {
+				continue
+			}
+		case GitFilterStaged:
+			if file.GitStatus != GitStaged {
+				continue
+			}
 		}
 
 		filteredList = append(filteredList, file)

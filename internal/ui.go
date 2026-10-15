@@ -300,6 +300,7 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		fmt.Fprintln(v, pad("  ↓ / j               : Move cursor down"))
 		fmt.Fprintln(v, pad("  /                   : Open dedicated Search section"))
 		fmt.Fprintln(v, pad("  s                   : Cycle Sort (Name -> Size -> Tokens -> Date)"))
+		fmt.Fprintln(v, pad("  f                   : Cycle Git Filter (All -> Changed -> Modified -> Untracked -> Staged)"))
 		fmt.Fprintln(v, pad("  J / K               : Scroll Content preview directly"))
 		fmt.Fprintln(v, pad("  Ctrl+J / Ctrl+K     : Scroll Content preview directly"))
 		fmt.Fprintln(v, pad("  Enter               : Focus Content View for line scrolling"))
@@ -452,6 +453,18 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		sortStr = "Date"
 	}
 
+	gitFilterStr := "All"
+	switch app.gitFilterMode {
+	case GitFilterChanged:
+		gitFilterStr = "Changed"
+	case GitFilterModified:
+		gitFilterStr = "Mod"
+	case GitFilterUntracked:
+		gitFilterStr = "New"
+	case GitFilterStaged:
+		gitFilterStr = "Staged"
+	}
+
 	selectedCount := len(app.selectedFiles)
 	totalCount := len(app.fileList)
 
@@ -482,8 +495,8 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		}
 	}
 
-	title := fmt.Sprintf(" Files (%d/%d | ~%s tok | %s) [%s]",
-		selectedCount, totalCount, formatTokens(selectedTokens), formatBytes(selectedBytes), sortStr)
+	title := fmt.Sprintf(" Files (%d/%d | ~%s tok | %s) [%s | Git: %s]",
+		selectedCount, totalCount, formatTokens(selectedTokens), formatBytes(selectedBytes), sortStr, gitFilterStr)
 	v.Title = title
 
 	for i, file := range currentFileList {
@@ -493,6 +506,17 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		if isSelected {
 			prefix = "[*]"
 		}
+
+		var gitColor string
+		switch file.GitStatus {
+		case GitModified:
+			gitColor = "\x1b[33m"
+		case GitUntracked:
+			gitColor = "\x1b[31m"
+		case GitStaged:
+			gitColor = "\x1b[36m"
+		}
+
 		line := fmt.Sprintf("%s %s (%s)", prefix, file.RelPath, formatTokens(file.EstimatedTokens))
 
 		switch {
@@ -501,9 +525,17 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		case isCurrent:
 			fmt.Fprintln(v, line)
 		case isSelected:
-			fmt.Fprintf(v, "\x1b[32m%s\x1b[0m\n", line)
+			if gitColor != "" {
+				fmt.Fprintf(v, "\x1b[32m%s\x1b[0m %s%s\x1b[0m (%s)\n", prefix, gitColor, file.RelPath, formatTokens(file.EstimatedTokens))
+			} else {
+				fmt.Fprintf(v, "\x1b[32m%s\x1b[0m\n", line)
+			}
 		default:
-			fmt.Fprintln(v, line)
+			if gitColor != "" {
+				fmt.Fprintf(v, "%s %s%s\x1b[0m (%s)\n", prefix, gitColor, file.RelPath, formatTokens(file.EstimatedTokens))
+			} else {
+				fmt.Fprintln(v, line)
+			}
 		}
 	}
 
@@ -554,6 +586,7 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		fmt.Fprintln(v, "[Enter]       : Focus this view for scrolling (j/k)")
 		fmt.Fprintln(v, "[/]           : Open dedicated Search section")
 		fmt.Fprintln(v, "[s]           : Cycle sort mode")
+		fmt.Fprintln(v, "[f]           : Cycle git filter")
 		fmt.Fprintln(v, "[Space]       : Toggle select file")
 		fmt.Fprintln(v, "[c] / [y]     : Copy selected files")
 		fmt.Fprintln(v, "[Tab]         : Switch focus")
@@ -657,7 +690,7 @@ func (app *App) resetStatus(g *gocui.Gui) {
 		}
 
 		v.Clear()
-		statusText := "/: Search | s: Sort | ?: Help | q: Quit"
+		statusText := "/: Search | f: GitFilter | s: Sort | ?: Help | q: Quit"
 
 		fmt.Fprint(v, statusText)
 		v.Rewind()

@@ -164,6 +164,31 @@ func (app *App) CycleSortMode(g *gocui.Gui, v *gocui.View) error {
 		currentEntry.Excludes = app.excludes
 		currentEntry.FilterMode = app.filterMode
 		currentEntry.SortMode = app.sortMode
+		currentEntry.GitFilterMode = app.gitFilterMode
+		currentEntry.LastOpened = time.Now()
+		app.cache[app.rootDir] = currentEntry
+
+		_ = saveCache(app.cacheFilePath, app.cache)
+	}
+
+	app.applyFilters()
+	return nil
+}
+
+func (app *App) CycleGitFilterMode(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.gitFilterMode = (app.gitFilterMode + 1) % 5
+
+	if app.cacheFilePath != "" {
+		if _, ok := app.cache[app.rootDir]; !ok {
+			app.cache[app.rootDir] = DirectoryCache{}
+		}
+		currentEntry := app.cache[app.rootDir]
+		currentEntry.Includes = app.includes
+		currentEntry.Excludes = app.excludes
+		currentEntry.FilterMode = app.filterMode
+		currentEntry.SortMode = app.sortMode
+		currentEntry.GitFilterMode = app.gitFilterMode
 		currentEntry.LastOpened = time.Now()
 		app.cache[app.rootDir] = currentEntry
 
@@ -312,6 +337,7 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 		currentEntry.LastOpened = time.Now()
 		currentEntry.FilterMode = app.filterMode
 		currentEntry.SortMode = app.sortMode
+		currentEntry.GitFilterMode = app.gitFilterMode
 		app.cache[app.rootDir] = currentEntry
 
 		err := saveCache(app.cacheFilePath, app.cache)
@@ -396,6 +422,7 @@ func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
 			currentEntry := app.cache[app.rootDir]
 			currentEntry.FilterMode = app.filterMode
 			currentEntry.SortMode = app.sortMode
+			currentEntry.GitFilterMode = app.gitFilterMode
 			currentEntry.LastOpened = time.Now()
 			app.cache[app.rootDir] = currentEntry
 			err := saveCache(app.cacheFilePath, app.cache)
