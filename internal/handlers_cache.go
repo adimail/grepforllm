@@ -33,7 +33,7 @@ func (app *App) ShowCacheView(g *gocui.Gui, v *gocui.View) error {
 	}
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("%-38s  %-9s  %-24s  %-19s\n", "DIRECTORY", "MODE", "ACTIVE FILTER", "LAST ACCESSED"))
+	builder.WriteString(fmt.Sprintf("%-34s  %-8s  %-7s  %-20s  %-19s\n", "DIRECTORY", "MODE", "SORT", "ACTIVE FILTER", "LAST ACCESSED"))
 	builder.WriteString(strings.Repeat("-", 96) + "\n")
 
 	paths := make([]string, 0, len(cacheCopy))
@@ -53,17 +53,27 @@ func (app *App) ShowCacheView(g *gocui.Gui, v *gocui.View) error {
 		if filterStr == "" {
 			filterStr = "(none)"
 		}
-		if len(filterStr) > 24 {
-			filterStr = filterStr[:21] + "..."
+		if len(filterStr) > 20 {
+			filterStr = filterStr[:17] + "..."
+		}
+
+		sortStr := "Name"
+		switch item.SortMode {
+		case SortBySize:
+			sortStr = "Size"
+		case SortByTokens:
+			sortStr = "Tokens"
+		case SortByModTime:
+			sortStr = "Date"
 		}
 
 		displayPath := p
-		if len(displayPath) > 38 {
-			displayPath = "..." + displayPath[len(displayPath)-35:]
+		if len(displayPath) > 34 {
+			displayPath = "..." + displayPath[len(displayPath)-31:]
 		}
 
 		timeStr := item.LastOpened.Format("2006-01-02 15:04:05")
-		builder.WriteString(fmt.Sprintf("%-38s  %-9s  %-24s  %-19s\n", displayPath, modeStr, filterStr, timeStr))
+		builder.WriteString(fmt.Sprintf("%-34s  %-8s  %-7s  %-20s  %-19s\n", displayPath, modeStr, sortStr, filterStr, timeStr))
 	}
 
 	contentStr := builder.String()
@@ -150,6 +160,7 @@ func (app *App) ConfirmClearCache(g *gocui.Gui, v *gocui.View) error {
 				Excludes:   app.excludes,
 				LastOpened: time.Now(),
 				FilterMode: app.filterMode,
+				SortMode:   app.sortMode,
 			}
 			app.mutex.Unlock()
 		}

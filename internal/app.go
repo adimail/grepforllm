@@ -41,14 +41,6 @@ const (
 	SortByModTime
 )
 
-type ExportFormat int
-
-const (
-	FormatStandard ExportFormat = iota
-	FormatMarkdown
-	FormatXML
-)
-
 type FileItem struct {
 	RelPath         string
 	SizeBytes       int64
@@ -61,6 +53,7 @@ type DirectoryCache struct {
 	Excludes   string     `json:"excludes"`
 	LastOpened time.Time  `json:"lastOpened"`
 	FilterMode FilterMode `json:"filterMode"`
+	SortMode   SortMode   `json:"sortMode,omitempty"`
 }
 
 type AppCache map[string]DirectoryCache
@@ -76,7 +69,6 @@ type App struct {
 	showHelp         bool
 	filterMode       FilterMode
 	sortMode         SortMode
-	exportFormat     ExportFormat
 	excludes         string
 	includes         string
 	searchQuery      string
@@ -114,7 +106,6 @@ func NewApp(rootDir string) *App {
 		showHelp:               false,
 		filterMode:             ExcludeMode,
 		sortMode:               SortByName,
-		exportFormat:           FormatStandard,
 		excludes:               DefaultExcludes,
 		includes:               "",
 		searchQuery:            "",
@@ -152,6 +143,7 @@ func NewApp(rootDir string) *App {
 			app.includes = entry.Includes
 			app.excludes = entry.Excludes
 			app.filterMode = entry.FilterMode
+			app.sortMode = entry.SortMode
 			entry.LastOpened = time.Now()
 			app.cache[app.rootDir] = entry
 		} else {
@@ -160,6 +152,7 @@ func NewApp(rootDir string) *App {
 				Excludes:   app.excludes,
 				LastOpened: time.Now(),
 				FilterMode: app.filterMode,
+				SortMode:   app.sortMode,
 			}
 		}
 

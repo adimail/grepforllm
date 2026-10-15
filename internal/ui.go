@@ -300,7 +300,6 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		fmt.Fprintln(v, pad("  ↓ / j               : Move cursor down"))
 		fmt.Fprintln(v, pad("  /                   : Open dedicated Search section"))
 		fmt.Fprintln(v, pad("  s                   : Cycle Sort (Name -> Size -> Tokens -> Date)"))
-		fmt.Fprintln(v, pad("  f                   : Cycle Export Format (Standard -> Markdown -> XML)"))
 		fmt.Fprintln(v, pad("  J / K               : Scroll Content preview directly"))
 		fmt.Fprintln(v, pad("  Ctrl+J / Ctrl+K     : Scroll Content preview directly"))
 		fmt.Fprintln(v, pad("  Enter               : Focus Content View for line scrolling"))
@@ -555,7 +554,6 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		fmt.Fprintln(v, "[Enter]       : Focus this view for scrolling (j/k)")
 		fmt.Fprintln(v, "[/]           : Open dedicated Search section")
 		fmt.Fprintln(v, "[s]           : Cycle sort mode")
-		fmt.Fprintln(v, "[f]           : Cycle prompt format")
 		fmt.Fprintln(v, "[Space]       : Toggle select file")
 		fmt.Fprintln(v, "[c] / [y]     : Copy selected files")
 		fmt.Fprintln(v, "[Tab]         : Switch focus")
@@ -659,7 +657,7 @@ func (app *App) resetStatus(g *gocui.Gui) {
 		}
 
 		v.Clear()
-		statusText := "/: Search | s: Sort | f: Format | ?: Help | q: Quit"
+		statusText := "/: Search | s: Sort | ?: Help | q: Quit"
 
 		fmt.Fprint(v, statusText)
 		v.Rewind()

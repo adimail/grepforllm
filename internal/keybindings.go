@@ -50,10 +50,6 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding(FilesViewName, 's', gocui.ModNone, app.CycleSortMode); err != nil {
 		return err
 	}
-	// Press 'f' to cycle clipboard export format (Standard, Markdown, XML)
-	if err := g.SetKeybinding(FilesViewName, 'f', gocui.ModNone, app.CycleExportFormat); err != nil {
-		return err
-	}
 	// Direct preview scrolling from the file list without changing focus
 	if err := g.SetKeybinding(FilesViewName, 'J', gocui.ModNone, app.DirectScrollContentDown); err != nil {
 		return err

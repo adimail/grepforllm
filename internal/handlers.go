@@ -154,29 +154,23 @@ func (app *App) SearchEditor(v *gocui.View, key gocui.Key, ch rune, mod gocui.Mo
 func (app *App) CycleSortMode(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Lock()
 	app.sortMode = (app.sortMode + 1) % 4
-	app.applyFilters()
-	return nil
-}
 
-func (app *App) CycleExportFormat(g *gocui.Gui, v *gocui.View) error {
-	app.mutex.Lock()
-	app.exportFormat = (app.exportFormat + 1) % 3
-	formatName := "Standard"
-	if app.exportFormat == FormatMarkdown {
-		formatName = "Markdown Fences"
-	} else if app.exportFormat == FormatXML {
-		formatName = "XML Tags"
+	if app.cacheFilePath != "" {
+		if _, ok := app.cache[app.rootDir]; !ok {
+			app.cache[app.rootDir] = DirectoryCache{}
+		}
+		currentEntry := app.cache[app.rootDir]
+		currentEntry.Includes = app.includes
+		currentEntry.Excludes = app.excludes
+		currentEntry.FilterMode = app.filterMode
+		currentEntry.SortMode = app.sortMode
+		currentEntry.LastOpened = time.Now()
+		app.cache[app.rootDir] = currentEntry
+
+		_ = saveCache(app.cacheFilePath, app.cache)
 	}
-	app.mutex.Unlock()
 
-	app.updateStatus(g, fmt.Sprintf("Export format: %s", formatName))
-	go func() {
-		time.Sleep(2 * time.Second)
-		g.Update(func(g *gocui.Gui) error {
-			app.resetStatus(g)
-			return nil
-		})
-	}()
+	app.applyFilters()
 	return nil
 }
 
@@ -317,6 +311,7 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 		currentEntry.Excludes = app.excludes
 		currentEntry.LastOpened = time.Now()
 		currentEntry.FilterMode = app.filterMode
+		currentEntry.SortMode = app.sortMode
 		app.cache[app.rootDir] = currentEntry
 
 		err := saveCache(app.cacheFilePath, app.cache)
@@ -400,6 +395,7 @@ func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
 		if _, ok := app.cache[app.rootDir]; ok {
 			currentEntry := app.cache[app.rootDir]
 			currentEntry.FilterMode = app.filterMode
+			currentEntry.SortMode = app.sortMode
 			currentEntry.LastOpened = time.Now()
 			app.cache[app.rootDir] = currentEntry
 			err := saveCache(app.cacheFilePath, app.cache)
@@ -519,7 +515,6 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 	fileListCopy := make([]FileItem, len(app.fileList))
 	copy(fileListCopy, app.fileList)
 	rootDirCopy := app.rootDir
-	format := app.exportFormat
 
 	app.mutex.Unlock()
 
@@ -537,25 +532,11 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 				contentStr = fmt.Sprintf("ERROR READING FILE: %v", err)
 			}
 
-			switch format {
-			case FormatMarkdown:
-				ext := strings.TrimPrefix(filepath.Ext(item.RelPath), ".")
-				if ext == "" {
-					ext = "text"
-				}
-				contentBuilder.WriteString(fmt.Sprintf("### %s\n```%s\n%s\n```\n\n", item.RelPath, ext, contentStr))
-			case FormatXML:
-				contentBuilder.WriteString(fmt.Sprintf("<file path=\"%s\">\n%s\n</file>\n\n", item.RelPath, contentStr))
-			default:
-				separator := fmt.Sprintf("==========================\nFILE: %s\n==========================\n", item.RelPath)
-				contentBuilder.WriteString(separator)
-				contentBuilder.WriteString("\n")
-				contentBuilder.WriteString(contentStr)
-				if !strings.HasSuffix(contentStr, "\n") {
-					contentBuilder.WriteString("\n")
-				}
-				contentBuilder.WriteString("\n")
+			ext := strings.TrimPrefix(filepath.Ext(item.RelPath), ".")
+			if ext == "" {
+				ext = "text"
 			}
+			contentBuilder.WriteString(fmt.Sprintf("### %s\n```%s\n%s\n```\n\n", item.RelPath, ext, contentStr))
 
 			count++
 			totalTokens += item.EstimatedTokens
