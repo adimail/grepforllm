@@ -88,7 +88,10 @@ func (app *App) ListFiles() error {
 
 		if d.IsDir() {
 			dirName := d.Name()
-			if dirName == ".git" || dirName == "node_modules" {
+			if dirName == ".git" || dirName == "node_modules" || dirName == "vendor" ||
+				dirName == ".next" || dirName == ".nuxt" || dirName == "dist" ||
+				dirName == "build" || dirName == "target" || dirName == ".venv" ||
+				dirName == "__pycache__" {
 				return filepath.SkipDir
 			}
 

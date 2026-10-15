@@ -358,6 +358,8 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 
 	var contentBuilder strings.Builder
 	count := 0
+	var totalTokens int
+	var totalBytes int64
 
 	for _, item := range fileListCopy {
 		if selectedFileCopy[item.RelPath] {
@@ -377,6 +379,8 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 				contentBuilder.WriteString("\n")
 			}
 			count++
+			totalTokens += item.EstimatedTokens
+			totalBytes += item.SizeBytes
 		}
 	}
 
@@ -387,7 +391,7 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 	if err != nil {
 		statusMsg = "Error copying to clipboard!"
 	} else {
-		statusMsg = fmt.Sprintf("Copied content of %d file(s) to clipboard.", count)
+		statusMsg = fmt.Sprintf("Copied %d file(s) (~%s tokens, %s) to clipboard.", count, formatTokens(totalTokens), formatBytes(totalBytes))
 	}
 
 	if err == nil && count > 0 {

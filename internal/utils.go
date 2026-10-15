@@ -8,25 +8,21 @@ import (
 	"path/filepath"
 )
 
-// --- Cache Helper Functions ---
-
-// getCacheFilePath determines the path for the cache file.
 func getCacheFilePath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get user config directory: %w", err)
 	}
 
-	cacheDir := filepath.Join(configDir, "grepforllm") // ~/.config/grepforllm
+	cacheDir := filepath.Join(configDir, "grepforllm")
 	err = os.MkdirAll(cacheDir, 0o750)
 	if err != nil {
 		return "", fmt.Errorf("failed to create cache directory %s: %w", cacheDir, err)
 	}
 
-	return filepath.Join(cacheDir, "cache.json"), nil // ~/.config/grepforllm/cache.json
+	return filepath.Join(cacheDir, "cache.json"), nil
 }
 
-// loadCache reads the cache file and unmarshals it.
 func loadCache(filePath string) (AppCache, error) {
 	cache := make(AppCache)
 	if filePath == "" {
@@ -54,7 +50,6 @@ func loadCache(filePath string) (AppCache, error) {
 	return cache, nil
 }
 
-// saveCache marshals the cache map and writes it to the file atomically.
 func saveCache(filePath string, cache AppCache) error {
 	if filePath == "" {
 		return fmt.Errorf("cache file path is empty, cannot save")
@@ -65,17 +60,14 @@ func saveCache(filePath string, cache AppCache) error {
 		return fmt.Errorf("failed to marshal cache data: %w", err)
 	}
 
-	// Use temp file for atomic write
 	tempFile := filePath + ".tmp"
 	err = os.WriteFile(tempFile, data, 0o640)
 	if err != nil {
 		return fmt.Errorf("failed to write temporary cache file %s: %w", tempFile, err)
 	}
 
-	// Rename temporary file to the actual cache file path
 	err = os.Rename(tempFile, filePath)
 	if err != nil {
-		// Clean up temp file if rename fails
 		_ = os.Remove(tempFile)
 		return fmt.Errorf("failed to rename temporary cache file to %s: %w", filePath, err)
 	}
@@ -83,7 +75,6 @@ func saveCache(filePath string, cache AppCache) error {
 	return nil
 }
 
-// Helper function to pretty print JSON bytes
 func prettyPrintJSON(data []byte) (string, error) {
 	var prettyJSON bytes.Buffer
 	err := json.Indent(&prettyJSON, data, "", "  ")
@@ -93,16 +84,36 @@ func prettyPrintJSON(data []byte) (string, error) {
 	return prettyJSON.String(), nil
 }
 
-// Helper function to check if content is likely text
 func isLikelyText(data []byte) bool {
-	// Simple check: presence of null byte often indicates binary
 	for _, b := range data {
 		if b == 0 {
 			return false
 		}
 	}
-	// Could add more checks here if needed (e.g., http.DetectContentType)
 	return true
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func formatTokens(t int) string {
+	if t < 1000 {
+		return fmt.Sprintf("%d", t)
+	}
+	if t < 1000000 {
+		return fmt.Sprintf("%.1fk", float64(t)/1000)
+	}
+	return fmt.Sprintf("%.1fM", float64(t)/1000000)
 }
 
 func max(a, b int) int {

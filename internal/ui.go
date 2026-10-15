@@ -393,7 +393,17 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 	isCopyHighlightActive := app.isCopyHighlightActive
 	app.mutex.Unlock()
 
-	title := fmt.Sprintf(" Files (%d/%d Sel) %s [?] Help ", selectedCount, totalCount, modeStr)
+	var selectedTokens int
+	var selectedBytes int64
+	for _, file := range currentFileList {
+		if currentSelectedFiles[file.RelPath] {
+			selectedTokens += file.EstimatedTokens
+			selectedBytes += file.SizeBytes
+		}
+	}
+
+	title := fmt.Sprintf(" Files (%d/%d Sel | ~%s tok | %s) %s [?] Help ",
+		selectedCount, totalCount, formatTokens(selectedTokens), formatBytes(selectedBytes), modeStr)
 	v.Title = title
 
 	for i, file := range currentFileList {
@@ -403,7 +413,7 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		if isSelected {
 			prefix = "[*]"
 		}
-		line := fmt.Sprintf("%s %s", prefix, file.RelPath)
+		line := fmt.Sprintf("%s %s (%s)", prefix, file.RelPath, formatTokens(file.EstimatedTokens))
 
 		switch {
 		case isCopyHighlightActive && isSelected:
@@ -437,16 +447,18 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 	app.mutex.Lock()
 	currentLine := app.currentLine
 	fileListLen := len(app.fileList)
-	var fileToPreviewRelPath string
+	var currentFileItem FileItem
+	hasFile := false
 	if fileListLen > 0 && currentLine >= 0 && currentLine < fileListLen {
-		fileToPreviewRelPath = app.fileList[currentLine].RelPath
+		currentFileItem = app.fileList[currentLine]
+		hasFile = true
 	}
 	rootDir := app.rootDir
 	previousPreviewedFile := app.currentlyPreviewedFile
 	currentContentOriginY := app.contentViewOriginY
 	app.mutex.Unlock()
 
-	resetScroll := (fileToPreviewRelPath != previousPreviewedFile)
+	resetScroll := (hasFile && currentFileItem.RelPath != previousPreviewedFile)
 	newOriginY := currentContentOriginY
 	if resetScroll {
 		newOriginY = 0
@@ -454,7 +466,7 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 
 	v.Clear()
 
-	if fileToPreviewRelPath == "" {
+	if !hasFile {
 		v.Title = " Content - PgUp/PgDn Scroll "
 		fmt.Fprintln(v, "\nNo file selected or list is empty.")
 		fmt.Fprintln(v, "\nUse ↑ / ↓ to navigate files.")
@@ -471,23 +483,24 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		return
 	}
 
-	fullPath := filepath.Join(rootDir, fileToPreviewRelPath)
+	fullPath := filepath.Join(rootDir, currentFileItem.RelPath)
 	fileContentBytes, readErr := os.ReadFile(fullPath)
 
-	v.Title = fmt.Sprintf(" Content: %s - PgUp/PgDn Scroll ", fileToPreviewRelPath)
+	v.Title = fmt.Sprintf(" Content: %s (%s, ~%s tok) - PgUp/PgDn Scroll ",
+		currentFileItem.RelPath, formatBytes(currentFileItem.SizeBytes), formatTokens(currentFileItem.EstimatedTokens))
 
 	if readErr != nil {
 		fmt.Fprintf(v, "\n!!! ERROR READING FILE: %v !!!\n", readErr)
 	} else if len(fileContentBytes) == 0 {
 		fmt.Fprintln(v, "(Empty File)")
 	} else if !isLikelyText(fileContentBytes) {
-		fmt.Fprintf(v, "(Binary File: %s)", fileToPreviewRelPath)
+		fmt.Fprintf(v, "(Binary File: %s)", currentFileItem.RelPath)
 	} else {
 		fmt.Fprint(v, string(fileContentBytes))
 	}
 
 	app.mutex.Lock()
-	app.currentlyPreviewedFile = fileToPreviewRelPath
+	app.currentlyPreviewedFile = currentFileItem.RelPath
 	app.mutex.Unlock()
 
 	_, viewHeight := v.Size()

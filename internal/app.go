@@ -19,7 +19,7 @@ const (
 	StatusViewName   = "status"
 	CacheViewName    = "cache"
 	ConfirmViewName  = "confirm"
-	DefaultExcludes  = ".git/,node_modules/"
+	DefaultExcludes  = ".git/,node_modules/,vendor/,.next/,.nuxt/,dist/,build/,target/,.venv/,__pycache__/,*.min.js,*.min.css,*.map,package-lock.json,pnpm-lock.yaml,yarn.lock,Cargo.lock,go.sum,poetry.lock,composer.lock,flake.lock"
 	MaxSelectedFiles = 50
 	MaxFileSizeBytes = 100 * 1024
 )
