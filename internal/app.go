@@ -16,6 +16,7 @@ const (
 	ContentViewName  = "content"
 	HelpViewName     = "help"
 	FilterViewName   = "filter"
+	SearchViewName   = "search"
 	StatusViewName   = "status"
 	CacheViewName    = "cache"
 	ConfirmViewName  = "confirm"
@@ -29,6 +30,23 @@ type FilterMode int
 const (
 	ExcludeMode FilterMode = iota
 	IncludeMode
+)
+
+type SortMode int
+
+const (
+	SortByName SortMode = iota
+	SortBySize
+	SortByTokens
+	SortByModTime
+)
+
+type ExportFormat int
+
+const (
+	FormatStandard ExportFormat = iota
+	FormatMarkdown
+	FormatXML
 )
 
 type FileItem struct {
@@ -57,8 +75,12 @@ type App struct {
 	currentLine      int
 	showHelp         bool
 	filterMode       FilterMode
+	sortMode         SortMode
+	exportFormat     ExportFormat
 	excludes         string
 	includes         string
+	searchQuery      string
+	isSearchActive   bool
 	mutex            sync.Mutex
 
 	currentlyPreviewedFile string
@@ -70,6 +92,8 @@ type App struct {
 	showCacheView                  bool
 	cacheViewContent               string
 	cacheViewOriginY               int
+	cacheCurrentLine               int
+	cacheTotalLines                int
 	awaitingCacheClearConfirmation bool
 
 	isLoading     bool
@@ -89,8 +113,12 @@ func NewApp(rootDir string) *App {
 		currentLine:            0,
 		showHelp:               false,
 		filterMode:             ExcludeMode,
+		sortMode:               SortByName,
+		exportFormat:           FormatStandard,
 		excludes:               DefaultExcludes,
 		includes:               "",
+		searchQuery:            "",
+		isSearchActive:         false,
 		currentlyPreviewedFile: "",
 		contentViewOriginY:     0,
 		cache:                  make(AppCache),
@@ -98,6 +126,8 @@ func NewApp(rootDir string) *App {
 		showCacheView:                  false,
 		cacheViewContent:               "",
 		cacheViewOriginY:               0,
+		cacheCurrentLine:               0,
+		cacheTotalLines:                0,
 		awaitingCacheClearConfirmation: false,
 
 		isLoading:     true,

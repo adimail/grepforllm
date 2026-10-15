@@ -15,14 +15,28 @@ func (app *App) SwitchFocus(g *gocui.Gui, v *gocui.View) error {
 	currentView := g.CurrentView()
 	nextViewName := FilesViewName
 
+	app.mutex.Lock()
+	searchActive := app.isSearchActive
+	app.mutex.Unlock()
+
 	if currentView != nil {
 		switch currentView.Name() {
 		case FilesViewName:
+			if searchActive {
+				nextViewName = SearchViewName
+			} else {
+				nextViewName = FilterViewName
+			}
+		case SearchViewName:
 			nextViewName = FilterViewName
 		case FilterViewName:
 			nextViewName = FilesViewName
 		case ContentViewName:
-			nextViewName = FilterViewName
+			if searchActive {
+				nextViewName = SearchViewName
+			} else {
+				nextViewName = FilterViewName
+			}
 		default:
 			nextViewName = FilesViewName
 		}
@@ -50,6 +64,119 @@ func (app *App) FocusContentView(g *gocui.Gui, v *gocui.View) error {
 	g.Update(func(g *gocui.Gui) error {
 		return app.Layout(g)
 	})
+	return nil
+}
+
+func (app *App) FocusFilesView(g *gocui.Gui, v *gocui.View) error {
+	if _, err := g.View(FilesViewName); err != nil {
+		return err
+	}
+
+	if _, err := g.SetCurrentView(FilesViewName); err != nil {
+		return err
+	}
+
+	g.Update(func(g *gocui.Gui) error {
+		return app.Layout(g)
+	})
+	return nil
+}
+
+func (app *App) StartSearch(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.isSearchActive = true
+	app.mutex.Unlock()
+
+	g.Update(func(g *gocui.Gui) error {
+		if err := app.Layout(g); err != nil {
+			return err
+		}
+		_, err := g.SetCurrentView(SearchViewName)
+		return err
+	})
+	return nil
+}
+
+func (app *App) ConfirmSearch(g *gocui.Gui, v *gocui.View) error {
+	if v == nil || v.Name() != SearchViewName {
+		return nil
+	}
+
+	app.mutex.Lock()
+	app.searchQuery = strings.TrimSpace(v.Buffer())
+	if app.searchQuery == "" {
+		app.isSearchActive = false
+	}
+	app.applyFilters()
+
+	g.Update(func(g *gocui.Gui) error {
+		_, _ = g.SetCurrentView(FilesViewName)
+		return app.Layout(g)
+	})
+	return nil
+}
+
+func (app *App) CancelSearch(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.searchQuery = ""
+	app.isSearchActive = false
+	_ = g.DeleteView(SearchViewName)
+	app.applyFilters()
+
+	g.Update(func(g *gocui.Gui) error {
+		_, _ = g.SetCurrentView(FilesViewName)
+		return app.Layout(g)
+	})
+	return nil
+}
+
+func (app *App) SearchEditor(v *gocui.View, key gocui.Key, ch rune, mod gocui.Modifier) {
+	switch {
+	case ch != 0 && mod == 0:
+		v.EditWrite(ch)
+	case key == gocui.KeySpace:
+		v.EditWrite(' ')
+	case key == gocui.KeyBackspace || key == gocui.KeyBackspace2:
+		v.EditDelete(true)
+	case key == gocui.KeyDelete:
+		v.EditDelete(false)
+	case key == gocui.KeyArrowLeft:
+		v.MoveCursor(-1, 0)
+	case key == gocui.KeyArrowRight:
+		v.MoveCursor(1, 0)
+	}
+
+	app.mutex.Lock()
+	app.searchQuery = strings.TrimSpace(v.Buffer())
+	app.applyFilters()
+}
+
+func (app *App) CycleSortMode(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.sortMode = (app.sortMode + 1) % 4
+	app.applyFilters()
+	return nil
+}
+
+func (app *App) CycleExportFormat(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.exportFormat = (app.exportFormat + 1) % 3
+	formatName := "Standard"
+	if app.exportFormat == FormatMarkdown {
+		formatName = "Markdown Fences"
+	} else if app.exportFormat == FormatXML {
+		formatName = "XML Tags"
+	}
+	app.mutex.Unlock()
+
+	app.updateStatus(g, fmt.Sprintf("Export format: %s", formatName))
+	go func() {
+		time.Sleep(2 * time.Second)
+		g.Update(func(g *gocui.Gui) error {
+			app.resetStatus(g)
+			return nil
+		})
+	}()
 	return nil
 }
 
@@ -392,6 +519,7 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 	fileListCopy := make([]FileItem, len(app.fileList))
 	copy(fileListCopy, app.fileList)
 	rootDirCopy := app.rootDir
+	format := app.exportFormat
 
 	app.mutex.Unlock()
 
@@ -404,19 +532,31 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 		if selectedFileCopy[item.RelPath] {
 			fullPath := filepath.Join(rootDirCopy, item.RelPath)
 			fileContent, err := os.ReadFile(fullPath)
-			separator := fmt.Sprintf("==========================\nFILE: %s\n==========================\n", item.RelPath)
-
-			contentBuilder.WriteString(separator)
+			contentStr := string(fileContent)
 			if err != nil {
-				contentBuilder.WriteString(fmt.Sprintf("\n!!! ERROR READING FILE: %v !!!\n\n", err))
-			} else {
+				contentStr = fmt.Sprintf("ERROR READING FILE: %v", err)
+			}
+
+			switch format {
+			case FormatMarkdown:
+				ext := strings.TrimPrefix(filepath.Ext(item.RelPath), ".")
+				if ext == "" {
+					ext = "text"
+				}
+				contentBuilder.WriteString(fmt.Sprintf("### %s\n```%s\n%s\n```\n\n", item.RelPath, ext, contentStr))
+			case FormatXML:
+				contentBuilder.WriteString(fmt.Sprintf("<file path=\"%s\">\n%s\n</file>\n\n", item.RelPath, contentStr))
+			default:
+				separator := fmt.Sprintf("==========================\nFILE: %s\n==========================\n", item.RelPath)
+				contentBuilder.WriteString(separator)
 				contentBuilder.WriteString("\n")
-				contentBuilder.WriteString(string(fileContent))
-				if !strings.HasSuffix(string(fileContent), "\n") {
+				contentBuilder.WriteString(contentStr)
+				if !strings.HasSuffix(contentStr, "\n") {
 					contentBuilder.WriteString("\n")
 				}
 				contentBuilder.WriteString("\n")
 			}
+
 			count++
 			totalTokens += item.EstimatedTokens
 			totalBytes += item.SizeBytes
@@ -465,8 +605,8 @@ func (app *App) scrollContent(g *gocui.Gui, amount int) error {
 		return nil
 	}
 
-	if cv := g.CurrentView(); cv != nil && cv.Name() == FilterViewName {
-		fv, _ := g.View(FilterViewName)
+	if cv := g.CurrentView(); cv != nil && (cv.Name() == FilterViewName || cv.Name() == SearchViewName) {
+		fv, _ := g.View(cv.Name())
 		if fv != nil && fv.Editable {
 			return nil
 		}

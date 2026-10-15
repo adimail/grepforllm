@@ -50,17 +50,23 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 	filterHeight := 3
 	statusBarHeight := 2
 
+	app.mutex.Lock()
+	isSearchActive := app.isSearchActive
+	searchQuery := app.searchQuery
+	app.mutex.Unlock()
+
+	searchHeight := 0
+	if isSearchActive {
+		searchHeight = 3
+	}
+
 	pathY0 := 0
 	pathY1 := pathY0 + pathHeight
 
 	filesY0 := pathY1 + 1
-	filesViewY1 := maxY - statusBarHeight - filterHeight
-
-	filterY0 := filesViewY1 + 1
-	filterY1 := filterY0 + filterHeight - 1
+	filesViewY1 := maxY - statusBarHeight - filterHeight - searchHeight
 
 	contentViewY1 := maxY - statusBarHeight
-
 	statusBarY0 := maxY - statusBarHeight
 	statusBarY1 := maxY
 
@@ -115,6 +121,41 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 			fv.FrameColor = gocui.ColorBlue
 		}
 	}
+
+	nextY := filesViewY1 + 1
+	if isSearchActive {
+		searchY0 := nextY
+		searchY1 := searchY0 + searchHeight - 1
+		nextY = searchY1 + 1
+
+		if sv, err := g.SetView(SearchViewName, 0, searchY0, filesWidth, searchY1, 0); err != nil {
+			if err != gocui.ErrUnknownView {
+				return err
+			}
+			sv.Title = " Search Name (Enter: Done, Esc: Clear) "
+			sv.Editable = true
+			sv.Wrap = false
+			sv.Editor = gocui.EditorFunc(app.SearchEditor)
+			sv.Clear()
+			fmt.Fprint(sv, searchQuery)
+			_ = sv.SetCursor(len(searchQuery), 0)
+		}
+
+		if sv, err := g.View(SearchViewName); err == nil {
+			if currentViewName == SearchViewName {
+				sv.FrameColor = gocui.ColorGreen
+				sv.FgColor = gocui.ColorWhite | gocui.AttrBold
+			} else {
+				sv.FrameColor = gocui.ColorYellow
+				sv.FgColor = gocui.ColorYellow
+			}
+		}
+	} else {
+		_ = g.DeleteView(SearchViewName)
+	}
+
+	filterY0 := nextY
+	filterY1 := filterY0 + filterHeight - 1
 
 	if v, err := g.SetView(FilterViewName, 0, filterY0, filesWidth, filterY1, 0); err != nil {
 		if err != gocui.ErrUnknownView {
@@ -220,54 +261,77 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
 	helpWidth := maxX * 3 / 4
 	helpHeight := maxY * 3 / 4
-	x0, y0 := (maxX-helpWidth)/2, (maxY-helpHeight)/2
-	x1, y1 := x0+helpWidth-1, y0+helpHeight-1
+	x0 := max(1, (maxX-helpWidth)/2)
+	y0 := max(1, (maxY-helpHeight)/2)
+	x1 := min(maxX-2, x0+helpWidth)
+	y1 := min(maxY-2, y0+helpHeight)
 
 	if v, err := g.SetView(HelpViewName, x0, y0, x1, y1, gocui.TOP); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = " Help (↑/↓/PgUp/PgDn to Scroll | ?/Esc/q to Close) "
-		v.Wrap = true
+		v.Title = " Help (↑/↓/PgUp/PgDn: Scroll | ?/Esc/q: Close) "
+		v.Wrap = false
 		v.Editable = false
 		v.Autoscroll = false
 		v.Frame = true
 		v.FgColor = gocui.ColorWhite
 
+		lineWidth := x1 - x0 - 2
+		pad := func(s string) string {
+			if len(s) < lineWidth {
+				return s + strings.Repeat(" ", lineWidth-len(s))
+			}
+			return s[:lineWidth]
+		}
+
 		v.Clear()
-		fmt.Fprintln(v, "grepforllm - Select & Copy File Contents")
-		fmt.Fprintln(v, "----------------------------------------------------")
-		fmt.Fprintln(v, "General:")
-		fmt.Fprintln(v, "  Tab                 : Switch focus Files <-> Filter <-> Content")
-		fmt.Fprintln(v, "  ?                   : Toggle this help message")
-		fmt.Fprintln(v, "  Ctrl+C              : Show Cache View")
-		fmt.Fprintln(v, "  q                   : Quit / Close Help / Close Cache")
-		fmt.Fprintln(v, "  Ctrl+Q              : Force Quit Application")
-		fmt.Fprintln(v, "\nFiles View (Left):")
-		fmt.Fprintln(v, "  ↑ / k               : Move cursor up")
-		fmt.Fprintln(v, "  ↓ / j               : Move cursor down")
-		fmt.Fprintln(v, "  J / K               : Scroll Content preview DOWN / UP directly")
-		fmt.Fprintln(v, "  Ctrl+J / Ctrl+K     : Scroll Content preview DOWN / UP directly")
-		fmt.Fprintln(v, "  Enter               : Focus Content View for line scrolling")
-		fmt.Fprintln(v, "  Space               : Toggle select file under cursor")
-		fmt.Fprintln(v, "  a                   : Select / Deselect all visible files")
-		fmt.Fprintln(v, "  c / y               : Copy contents of selected files to clipboard")
-		fmt.Fprintln(v, "\nContent View (Right):")
-		fmt.Fprintln(v, "  ↑ / k               : Scroll content UP one line (when focused)")
-		fmt.Fprintln(v, "  ↓ / j               : Scroll content DOWN one line (when focused)")
-		fmt.Fprintln(v, "  PgUp / Ctrl+B       : Scroll content UP one page (works globally)")
-		fmt.Fprintln(v, "  PgDn                : Scroll content DOWN one page (works globally)")
-		fmt.Fprintln(v, "\nFilter View (Bottom-Left):")
-		fmt.Fprintln(v, "  (Type patterns: *.go, cmd/, file.txt)")
-		fmt.Fprintln(v, "  Enter               : Apply filter & return focus to Files")
-		fmt.Fprintln(v, "  Esc                 : Cancel input & return focus to Files")
-		fmt.Fprintln(v, "  Ctrl+F              : Toggle filter mode (Include/Exclude)")
-		fmt.Fprintln(v, "\nCache View (Ctrl+C):")
-		fmt.Fprintln(v, "  ↑ / k / ↓ / j       : Scroll Line")
-		fmt.Fprintln(v, "  PgUp / PgDn         : Scroll Page")
-		fmt.Fprintln(v, "  Ctrl+D              : Prompt to clear cache")
-		fmt.Fprintln(v, "  y / n               : Confirm / Cancel cache clear")
-		fmt.Fprintln(v, "  Esc / q             : Close Cache View")
+		fmt.Fprintln(v, pad("grepforllm - Select & Copy File Contents for LLM Prompts"))
+		fmt.Fprintln(v, pad(strings.Repeat("-", lineWidth)))
+		fmt.Fprintln(v, pad("General:"))
+		fmt.Fprintln(v, pad("  Tab                 : Switch focus Files <-> Search <-> Filter <-> Content"))
+		fmt.Fprintln(v, pad("  ?                   : Toggle this help message"))
+		fmt.Fprintln(v, pad("  Ctrl+C              : Show Project Cache History"))
+		fmt.Fprintln(v, pad("  q                   : Quit / Close Modal"))
+		fmt.Fprintln(v, pad("  Ctrl+Q              : Force Quit Application"))
+		fmt.Fprintln(v, pad(""))
+		fmt.Fprintln(v, pad("Files View (Left):"))
+		fmt.Fprintln(v, pad("  ↑ / k               : Move cursor up"))
+		fmt.Fprintln(v, pad("  ↓ / j               : Move cursor down"))
+		fmt.Fprintln(v, pad("  /                   : Open dedicated Search section"))
+		fmt.Fprintln(v, pad("  s                   : Cycle Sort (Name -> Size -> Tokens -> Date)"))
+		fmt.Fprintln(v, pad("  f                   : Cycle Export Format (Standard -> Markdown -> XML)"))
+		fmt.Fprintln(v, pad("  J / K               : Scroll Content preview directly"))
+		fmt.Fprintln(v, pad("  Ctrl+J / Ctrl+K     : Scroll Content preview directly"))
+		fmt.Fprintln(v, pad("  Enter               : Focus Content View for line scrolling"))
+		fmt.Fprintln(v, pad("  Space               : Toggle select file"))
+		fmt.Fprintln(v, pad("  a                   : Select / Deselect all visible files"))
+		fmt.Fprintln(v, pad("  c / y               : Copy selected files to clipboard"))
+		fmt.Fprintln(v, pad(""))
+		fmt.Fprintln(v, pad("Search Section (Press / to open):"))
+		fmt.Fprintln(v, pad("  (Type file name query - filters list live as you type)"))
+		fmt.Fprintln(v, pad("  Enter               : Keep search & return focus to Files"))
+		fmt.Fprintln(v, pad("  Esc                 : Clear search, close panel & return to Files"))
+		fmt.Fprintln(v, pad(""))
+		fmt.Fprintln(v, pad("Content View (Right):"))
+		fmt.Fprintln(v, pad("  Enter / Esc / h / ← : Return focus to Files list"))
+		fmt.Fprintln(v, pad("  ↑ / k               : Scroll content UP one line"))
+		fmt.Fprintln(v, pad("  ↓ / j               : Scroll content DOWN one line"))
+		fmt.Fprintln(v, pad("  PgUp / Ctrl+B       : Scroll content UP one page"))
+		fmt.Fprintln(v, pad("  PgDn                : Scroll content DOWN one page"))
+		fmt.Fprintln(v, pad(""))
+		fmt.Fprintln(v, pad("Filter View (Bottom-Left):"))
+		fmt.Fprintln(v, pad("  (Type patterns: *.go, cmd/, file.txt)"))
+		fmt.Fprintln(v, pad("  Enter               : Apply filter & return focus to Files"))
+		fmt.Fprintln(v, pad("  Esc                 : Cancel input & return focus to Files"))
+		fmt.Fprintln(v, pad("  Ctrl+F              : Toggle filter mode (Include/Exclude)"))
+		fmt.Fprintln(v, pad(""))
+		fmt.Fprintln(v, pad("Cache View (Ctrl+C):"))
+		fmt.Fprintln(v, pad("  ↑ / k / ↓ / j       : Move cursor line across history"))
+		fmt.Fprintln(v, pad("  PgUp / PgDn         : Scroll Page"))
+		fmt.Fprintln(v, pad("  Ctrl+D              : Prompt to clear cache"))
+		fmt.Fprintln(v, pad("  y / n               : Confirm / Cancel cache clear"))
+		fmt.Fprintln(v, pad("  Esc / q             : Close Cache View"))
 
 		if _, err := g.SetCurrentView(HelpViewName); err != nil {
 			return err
@@ -288,7 +352,7 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
 
 	viewsToDelete := []string{
-		FilesViewName, ContentViewName, FilterViewName, PathViewName,
+		FilesViewName, ContentViewName, FilterViewName, SearchViewName, PathViewName,
 		HelpViewName,
 		"loading",
 		"error",
@@ -302,6 +366,7 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 	app.mutex.Lock()
 	cacheContent := app.cacheViewContent
 	cacheOriginY := app.cacheViewOriginY
+	cacheCurLine := app.cacheCurrentLine
 	awaitingConfirm := app.awaitingCacheClearConfirmation
 	app.mutex.Unlock()
 
@@ -314,11 +379,15 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 		cv.Wrap = false
 		cv.Autoscroll = false
 		cv.Frame = true
+		cv.Highlight = true
+		cv.SelBgColor = gocui.ColorCyan
+		cv.SelFgColor = gocui.ColorBlack
 		cv.FgColor = gocui.ColorWhite
 
 		cv.Clear()
 		fmt.Fprint(cv, cacheContent)
 		_ = cv.SetOrigin(0, cacheOriginY)
+		_ = cv.SetCursor(0, cacheCurLine)
 
 		if _, err := g.SetCurrentView(CacheViewName); err != nil {
 			return err
@@ -328,6 +397,7 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 		cv.Clear()
 		fmt.Fprint(cv, cacheContent)
 		_ = cv.SetOrigin(0, cacheOriginY)
+		_ = cv.SetCursor(0, cacheCurLine)
 
 		if g.CurrentView() == cv {
 			cv.FrameColor = gocui.ColorGreen
@@ -372,10 +442,17 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 	v.Clear()
 
 	app.mutex.Lock()
-	modeStr := "[Exclude]"
-	if app.filterMode == IncludeMode {
-		modeStr = "[Include]"
+
+	sortStr := "Name"
+	switch app.sortMode {
+	case SortBySize:
+		sortStr = "Size"
+	case SortByTokens:
+		sortStr = "Tokens"
+	case SortByModTime:
+		sortStr = "Date"
 	}
+
 	selectedCount := len(app.selectedFiles)
 	totalCount := len(app.fileList)
 
@@ -406,8 +483,8 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		}
 	}
 
-	title := fmt.Sprintf(" Files (%d/%d Sel | ~%s tok | %s) %s [?] Help ",
-		selectedCount, totalCount, formatTokens(selectedTokens), formatBytes(selectedBytes), modeStr)
+	title := fmt.Sprintf(" Files (%d/%d | ~%s tok | %s) [%s]",
+		selectedCount, totalCount, formatTokens(selectedTokens), formatBytes(selectedBytes), sortStr)
 	v.Title = title
 
 	for i, file := range currentFileList {
@@ -474,12 +551,15 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		v.Title = " Content - PgUp/PgDn Scroll "
 		fmt.Fprintln(v, "\nNo file selected or list is empty.")
 		fmt.Fprintln(v, "\nUse ↑ / ↓ to navigate files.")
-		fmt.Fprintln(v, "[J] / [K] : Scroll preview directly")
-		fmt.Fprintln(v, "[Enter]   : Focus this view for scrolling (j/k)")
-		fmt.Fprintln(v, "[Space]   : Toggle select file")
-		fmt.Fprintln(v, "[c] / [y] : Copy selected files")
-		fmt.Fprintln(v, "[Tab]     : Switch focus")
-		fmt.Fprintln(v, "[?]       : Help")
+		fmt.Fprintln(v, "[J] / [K]     : Scroll preview directly")
+		fmt.Fprintln(v, "[Enter]       : Focus this view for scrolling (j/k)")
+		fmt.Fprintln(v, "[/]           : Open dedicated Search section")
+		fmt.Fprintln(v, "[s]           : Cycle sort mode")
+		fmt.Fprintln(v, "[f]           : Cycle prompt format")
+		fmt.Fprintln(v, "[Space]       : Toggle select file")
+		fmt.Fprintln(v, "[c] / [y]     : Copy selected files")
+		fmt.Fprintln(v, "[Tab]         : Switch focus")
+		fmt.Fprintln(v, "[?]           : Help")
 		_ = v.SetOrigin(0, 0)
 		app.mutex.Lock()
 		app.currentlyPreviewedFile = ""
@@ -509,7 +589,7 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		_ = file.Close()
 	}
 
-	v.Title = fmt.Sprintf(" Content: %s (%s, ~%s tok) - PgUp/PgDn / J/K Scroll ",
+	v.Title = fmt.Sprintf(" Content: %s (%s, ~%s tok) - [Enter/Esc: Back to Files] ",
 		currentFileItem.RelPath, formatBytes(currentFileItem.SizeBytes), formatTokens(currentFileItem.EstimatedTokens))
 
 	if readErr != nil {
@@ -579,7 +659,7 @@ func (app *App) resetStatus(g *gocui.Gui) {
 		}
 
 		v.Clear()
-		statusText := "?: Help | q: Quit"
+		statusText := "/: Search | s: Sort | f: Format | ?: Help | q: Quit"
 
 		fmt.Fprint(v, statusText)
 		v.Rewind()
@@ -593,7 +673,7 @@ func (app *App) resetStatusForCacheView(g *gocui.Gui) {
 		v, err := g.View(StatusViewName)
 		if err == nil {
 			v.Clear()
-			fmt.Fprint(v, "↑↓ PgUp/Dn: Scroll | Ctrl+D: Clear Cache | Esc/q: Close Cache View")
+			fmt.Fprint(v, "↑↓/jk: Navigate | PgUp/Dn: Scroll | Ctrl+D: Clear Cache | Esc/q: Close")
 			v.Rewind()
 		} else if err != gocui.ErrUnknownView {
 			return err

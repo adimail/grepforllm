@@ -24,6 +24,8 @@ func (app *App) ShowCacheView(g *gocui.Gui, v *gocui.View) error {
 		app.cacheViewContent = "No cache data available."
 		app.showCacheView = true
 		app.cacheViewOriginY = 0
+		app.cacheCurrentLine = 0
+		app.cacheTotalLines = 1
 		app.awaitingCacheClearConfirmation = false
 		app.mutex.Unlock()
 		g.Update(func(g *gocui.Gui) error { return app.Layout(g) })
@@ -64,10 +66,15 @@ func (app *App) ShowCacheView(g *gocui.Gui, v *gocui.View) error {
 		builder.WriteString(fmt.Sprintf("%-38s  %-9s  %-24s  %-19s\n", displayPath, modeStr, filterStr, timeStr))
 	}
 
+	contentStr := builder.String()
+	totalLines := strings.Count(contentStr, "\n")
+
 	app.mutex.Lock()
-	app.cacheViewContent = builder.String()
+	app.cacheViewContent = contentStr
 	app.showCacheView = true
 	app.cacheViewOriginY = 0
+	app.cacheCurrentLine = 2
+	app.cacheTotalLines = totalLines
 	app.awaitingCacheClearConfirmation = false
 	app.mutex.Unlock()
 
@@ -151,6 +158,8 @@ func (app *App) ConfirmClearCache(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Lock()
 	app.cacheViewContent = newCacheContent
 	app.cacheViewOriginY = 0
+	app.cacheCurrentLine = 0
+	app.cacheTotalLines = 1
 	app.mutex.Unlock()
 
 	g.Update(func(g *gocui.Gui) error {
@@ -159,6 +168,7 @@ func (app *App) ConfirmClearCache(g *gocui.Gui, v *gocui.View) error {
 			cv.Clear()
 			fmt.Fprint(cv, newCacheContent)
 			_ = cv.SetOrigin(0, 0)
+			_ = cv.SetCursor(0, 0)
 		}
 		return nil
 	})
@@ -195,50 +205,95 @@ func (app *App) CancelClearCache(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-func (app *App) scrollCacheView(g *gocui.Gui, v *gocui.View, direction int) error {
+func (app *App) ScrollCacheViewUp(g *gocui.Gui, v *gocui.View) error {
 	if v == nil || v.Name() != CacheViewName {
 		return nil
 	}
+	app.mutex.Lock()
+	if app.cacheCurrentLine > 2 {
+		app.cacheCurrentLine--
+	}
+	curLine := app.cacheCurrentLine
+	app.mutex.Unlock()
+
+	ox, oy := v.Origin()
+	if curLine < oy {
+		_ = v.SetOrigin(ox, curLine)
+		app.mutex.Lock()
+		app.cacheViewOriginY = curLine
+		app.mutex.Unlock()
+	}
+	_ = v.SetCursor(0, curLine)
+	return nil
+}
+
+func (app *App) ScrollCacheViewDown(g *gocui.Gui, v *gocui.View) error {
+	if v == nil || v.Name() != CacheViewName {
+		return nil
+	}
+	app.mutex.Lock()
+	if app.cacheCurrentLine < app.cacheTotalLines-1 {
+		app.cacheCurrentLine++
+	}
+	curLine := app.cacheCurrentLine
+	app.mutex.Unlock()
+
 	ox, oy := v.Origin()
 	_, vy := v.Size()
 
-	scrollAmount := 1
-	if direction == -2 {
-		scrollAmount = max(1, vy-1)
-		direction = -1
-	} else if direction == 2 {
-		scrollAmount = max(1, vy-1)
-		direction = 1
+	if curLine >= oy+vy {
+		newOy := curLine - vy + 1
+		_ = v.SetOrigin(ox, newOy)
+		app.mutex.Lock()
+		app.cacheViewOriginY = newOy
+		app.mutex.Unlock()
 	}
+	_ = v.SetCursor(0, curLine)
+	return nil
+}
 
-	newOy := oy + (direction * scrollAmount)
-	if newOy < 0 {
-		newOy = 0
+func (app *App) ScrollCacheViewPageUp(g *gocui.Gui, v *gocui.View) error {
+	if v == nil || v.Name() != CacheViewName {
+		return nil
 	}
+	_, vy := v.Size()
+	step := max(1, vy-1)
 
-	if err := v.SetOrigin(ox, newOy); err != nil {
-		return err
-	}
+	app.mutex.Lock()
+	app.cacheCurrentLine = max(2, app.cacheCurrentLine-step)
+	curLine := app.cacheCurrentLine
+	app.mutex.Unlock()
 
+	ox, oy := v.Origin()
+	newOy := max(0, oy-step)
+	_ = v.SetOrigin(ox, newOy)
 	app.mutex.Lock()
 	app.cacheViewOriginY = newOy
 	app.mutex.Unlock()
 
+	_ = v.SetCursor(0, curLine)
 	return nil
 }
 
-func (app *App) ScrollCacheViewUp(g *gocui.Gui, v *gocui.View) error {
-	return app.scrollCacheView(g, v, -1)
-}
-
-func (app *App) ScrollCacheViewDown(g *gocui.Gui, v *gocui.View) error {
-	return app.scrollCacheView(g, v, 1)
-}
-
-func (app *App) ScrollCacheViewPageUp(g *gocui.Gui, v *gocui.View) error {
-	return app.scrollCacheView(g, v, -2)
-}
-
 func (app *App) ScrollCacheViewPageDown(g *gocui.Gui, v *gocui.View) error {
-	return app.scrollCacheView(g, v, 2)
+	if v == nil || v.Name() != CacheViewName {
+		return nil
+	}
+	_, vy := v.Size()
+	step := max(1, vy-1)
+
+	app.mutex.Lock()
+	app.cacheCurrentLine = min(max(2, app.cacheTotalLines-1), app.cacheCurrentLine+step)
+	curLine := app.cacheCurrentLine
+	app.mutex.Unlock()
+
+	ox, oy := v.Origin()
+	newOy := oy + step
+	_ = v.SetOrigin(ox, newOy)
+	app.mutex.Lock()
+	app.cacheViewOriginY = newOy
+	app.mutex.Unlock()
+
+	_ = v.SetCursor(0, curLine)
+	return nil
 }

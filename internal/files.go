@@ -172,14 +172,40 @@ func (app *App) applyFilters() {
 	currentFilterMode := app.filterMode
 	currentIncludes := app.includes
 	currentExcludes := app.excludes
+	query := strings.ToLower(strings.TrimSpace(app.searchQuery))
 
 	for _, file := range app.allFiles {
-		if app.shouldIncludeFileByFilters(file.RelPath, currentFilterMode, currentIncludes, currentExcludes) {
-			filteredList = append(filteredList, file)
-			if app.selectedFiles[file.RelPath] {
-				newSelectedFiles[file.RelPath] = true
-			}
+		if !app.shouldIncludeFileByFilters(file.RelPath, currentFilterMode, currentIncludes, currentExcludes) {
+			continue
 		}
+
+		if query != "" && !strings.Contains(strings.ToLower(file.RelPath), query) {
+			continue
+		}
+
+		filteredList = append(filteredList, file)
+		if app.selectedFiles[file.RelPath] {
+			newSelectedFiles[file.RelPath] = true
+		}
+	}
+
+	switch app.sortMode {
+	case SortByName:
+		sort.Slice(filteredList, func(i, j int) bool {
+			return filteredList[i].RelPath < filteredList[j].RelPath
+		})
+	case SortBySize:
+		sort.Slice(filteredList, func(i, j int) bool {
+			return filteredList[i].SizeBytes > filteredList[j].SizeBytes
+		})
+	case SortByTokens:
+		sort.Slice(filteredList, func(i, j int) bool {
+			return filteredList[i].EstimatedTokens > filteredList[j].EstimatedTokens
+		})
+	case SortByModTime:
+		sort.Slice(filteredList, func(i, j int) bool {
+			return filteredList[i].ModTime.After(filteredList[j].ModTime)
+		})
 	}
 
 	app.fileList = filteredList
