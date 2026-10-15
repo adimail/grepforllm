@@ -3,6 +3,7 @@ package internal
 import "github.com/awesome-gocui/gocui"
 
 func (app *App) SetKeybindings(g *gocui.Gui) error {
+	// Global keybindings
 	if err := g.SetKeybinding("", gocui.KeyCtrlQ, gocui.ModNone, quit); err != nil {
 		return err
 	}
@@ -27,10 +28,8 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding("", gocui.KeyPgdn, gocui.ModNone, app.ScrollContentDown); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding("", gocui.KeyCtrlF, gocui.ModNone, app.ToggleFilterMode); err != nil {
-		return err
-	}
 
+	// Files view keybindings
 	if err := g.SetKeybinding(FilesViewName, gocui.KeyArrowUp, gocui.ModNone, app.CursorUp); err != nil {
 		return err
 	}
@@ -43,6 +42,30 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding(FilesViewName, 'j', gocui.ModNone, app.CursorDown); err != nil {
 		return err
 	}
+	// Press '/' to open the dedicated search section
+	if err := g.SetKeybinding(FilesViewName, '/', gocui.ModNone, app.StartSearch); err != nil {
+		return err
+	}
+	// Press 's' to cycle sorting options (Name, Size, Tokens, Date)
+	if err := g.SetKeybinding(FilesViewName, 's', gocui.ModNone, app.CycleSortMode); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(FilesViewName, 'f', gocui.ModNone, app.CycleGitFilterMode); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(FilesViewName, 'J', gocui.ModNone, app.DirectScrollContentDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(FilesViewName, 'K', gocui.ModNone, app.DirectScrollContentUp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(FilesViewName, gocui.KeyCtrlJ, gocui.ModNone, app.DirectScrollContentDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(FilesViewName, gocui.KeyCtrlK, gocui.ModNone, app.DirectScrollContentUp); err != nil {
+		return err
+	}
+	// Selection and copying
 	if err := g.SetKeybinding(FilesViewName, gocui.KeySpace, gocui.ModNone, app.ToggleSelect); err != nil {
 		return err
 	}
@@ -55,10 +78,20 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding(FilesViewName, 'y', gocui.ModNone, app.CopyAllSelected); err != nil {
 		return err
 	}
+	// Focus preview panel
 	if err := g.SetKeybinding(FilesViewName, gocui.KeyEnter, gocui.ModNone, app.FocusContentView); err != nil {
 		return err
 	}
 
+	// Search view keybindings
+	if err := g.SetKeybinding(SearchViewName, gocui.KeyEnter, gocui.ModNone, app.ConfirmSearch); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(SearchViewName, gocui.KeyEsc, gocui.ModNone, app.CancelSearch); err != nil {
+		return err
+	}
+
+	// Content view keybindings: line navigation & jump back to files view
 	if err := g.SetKeybinding(ContentViewName, gocui.KeyArrowUp, gocui.ModNone, app.ScrollContentLineUp); err != nil {
 		return err
 	}
@@ -71,7 +104,21 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding(ContentViewName, 'j', gocui.ModNone, app.ScrollContentLineDown); err != nil {
 		return err
 	}
+	// Pressing Enter, Esc, h, or Left arrow in Content view jumps back to the file list
+	if err := g.SetKeybinding(ContentViewName, gocui.KeyEnter, gocui.ModNone, app.FocusFilesView); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(ContentViewName, gocui.KeyEsc, gocui.ModNone, app.FocusFilesView); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(ContentViewName, 'h', gocui.ModNone, app.FocusFilesView); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(ContentViewName, gocui.KeyArrowLeft, gocui.ModNone, app.FocusFilesView); err != nil {
+		return err
+	}
 
+	// Help modal scrolling and dismissal
 	if err := g.SetKeybinding(HelpViewName, '?', gocui.ModNone, app.ToggleHelp); err != nil {
 		return err
 	}
@@ -81,16 +128,37 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding(HelpViewName, 'q', gocui.ModNone, app.ToggleHelp); err != nil {
 		return err
 	}
-
-	for _, vName := range []string{FilterIncludeViewName, FilterExcludeViewName} {
-		if err := g.SetKeybinding(vName, gocui.KeyEnter, gocui.ModNone, app.ApplyFilter); err != nil {
-			return err
-		}
-		if err := g.SetKeybinding(vName, gocui.KeyEsc, gocui.ModNone, app.CancelFilter); err != nil {
-			return err
-		}
+	if err := g.SetKeybinding(HelpViewName, gocui.KeyArrowUp, gocui.ModNone, app.ScrollHelpUp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(HelpViewName, 'k', gocui.ModNone, app.ScrollHelpUp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(HelpViewName, gocui.KeyArrowDown, gocui.ModNone, app.ScrollHelpDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(HelpViewName, 'j', gocui.ModNone, app.ScrollHelpDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(HelpViewName, gocui.KeyPgup, gocui.ModNone, app.ScrollHelpPageUp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(HelpViewName, gocui.KeyPgdn, gocui.ModNone, app.ScrollHelpPageDown); err != nil {
+		return err
 	}
 
+	// Filter view bindings
+	if err := g.SetKeybinding(FilterViewName, gocui.KeyEnter, gocui.ModNone, app.ApplyFilter); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(FilterViewName, gocui.KeyEsc, gocui.ModNone, app.CancelFilter); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(FilterViewName, gocui.KeyCtrlF, gocui.ModNone, app.ToggleFilterMode); err != nil {
+		return err
+	}
+
+	// Cache history table navigation and cursor movements
 	if err := g.SetKeybinding(CacheViewName, gocui.KeyEsc, gocui.ModNone, app.CloseCacheView); err != nil {
 		return err
 	}
@@ -132,8 +200,12 @@ func (app *App) QuitHandler(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Lock()
 	isCacheViewOpen := app.showCacheView
 	awaitingConfirm := app.awaitingCacheClearConfirmation
+	searchActive := app.isSearchActive
 	app.mutex.Unlock()
 
+	if searchActive {
+		return app.CancelSearch(g, v)
+	}
 	if awaitingConfirm {
 		return app.CancelClearCache(g, v)
 	}

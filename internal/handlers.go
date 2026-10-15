@@ -15,39 +15,35 @@ func (app *App) SwitchFocus(g *gocui.Gui, v *gocui.View) error {
 	currentView := g.CurrentView()
 	nextViewName := FilesViewName
 
+	app.mutex.Lock()
+	searchActive := app.isSearchActive
+	app.mutex.Unlock()
+
 	if currentView != nil {
 		switch currentView.Name() {
 		case FilesViewName:
-			if app.filterMode == IncludeMode {
-				nextViewName = FilterIncludeViewName
+			if searchActive {
+				nextViewName = SearchViewName
 			} else {
-				nextViewName = FilterExcludeViewName
+				nextViewName = FilterViewName
 			}
-		case FilterIncludeViewName:
-			nextViewName = FilterExcludeViewName
-		case FilterExcludeViewName:
+		case SearchViewName:
+			nextViewName = FilterViewName
+		case FilterViewName:
 			nextViewName = FilesViewName
 		case ContentViewName:
-			if app.filterMode == IncludeMode {
-				nextViewName = FilterIncludeViewName
+			if searchActive {
+				nextViewName = SearchViewName
 			} else {
-				nextViewName = FilterExcludeViewName
+				nextViewName = FilterViewName
 			}
 		default:
 			nextViewName = FilesViewName
 		}
 	}
 
-	nv, err := g.SetCurrentView(nextViewName)
-	if err != nil {
+	if _, err := g.SetCurrentView(nextViewName); err != nil {
 		return err
-	}
-
-	if nextViewName == FilterIncludeViewName || nextViewName == FilterExcludeViewName {
-		content := strings.TrimSuffix(nv.Buffer(), "\n")
-		cursorPos := len(content)
-		_ = nv.SetCursor(cursorPos, 0)
-		app.adjustFilterCursor(g, nv)
 	}
 
 	g.Update(func(g *gocui.Gui) error {
@@ -71,6 +67,138 @@ func (app *App) FocusContentView(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
+func (app *App) FocusFilesView(g *gocui.Gui, v *gocui.View) error {
+	if _, err := g.View(FilesViewName); err != nil {
+		return err
+	}
+
+	if _, err := g.SetCurrentView(FilesViewName); err != nil {
+		return err
+	}
+
+	g.Update(func(g *gocui.Gui) error {
+		return app.Layout(g)
+	})
+	return nil
+}
+
+func (app *App) StartSearch(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.isSearchActive = true
+	app.mutex.Unlock()
+
+	g.Update(func(g *gocui.Gui) error {
+		if err := app.Layout(g); err != nil {
+			return err
+		}
+		_, err := g.SetCurrentView(SearchViewName)
+		return err
+	})
+	return nil
+}
+
+func (app *App) ConfirmSearch(g *gocui.Gui, v *gocui.View) error {
+	if v == nil || v.Name() != SearchViewName {
+		return nil
+	}
+
+	app.mutex.Lock()
+	app.searchQuery = strings.TrimSpace(v.Buffer())
+	if app.searchQuery == "" {
+		app.isSearchActive = false
+	}
+	app.applyFilters()
+
+	g.Update(func(g *gocui.Gui) error {
+		_, _ = g.SetCurrentView(FilesViewName)
+		return app.Layout(g)
+	})
+	return nil
+}
+
+func (app *App) CancelSearch(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.searchQuery = ""
+	app.isSearchActive = false
+	_ = g.DeleteView(SearchViewName)
+	app.applyFilters()
+
+	g.Update(func(g *gocui.Gui) error {
+		_, _ = g.SetCurrentView(FilesViewName)
+		return app.Layout(g)
+	})
+	return nil
+}
+
+func (app *App) SearchEditor(v *gocui.View, key gocui.Key, ch rune, mod gocui.Modifier) {
+	switch {
+	case ch != 0 && mod == 0:
+		v.EditWrite(ch)
+	case key == gocui.KeySpace:
+		v.EditWrite(' ')
+	case key == gocui.KeyBackspace || key == gocui.KeyBackspace2:
+		v.EditDelete(true)
+	case key == gocui.KeyDelete:
+		v.EditDelete(false)
+	case key == gocui.KeyArrowLeft:
+		v.MoveCursor(-1, 0)
+	case key == gocui.KeyArrowRight:
+		v.MoveCursor(1, 0)
+	}
+
+	app.mutex.Lock()
+	app.searchQuery = strings.TrimSpace(v.Buffer())
+	app.applyFilters()
+}
+
+func (app *App) CycleSortMode(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.sortMode = (app.sortMode + 1) % 4
+
+	if app.cacheFilePath != "" {
+		if _, ok := app.cache[app.rootDir]; !ok {
+			app.cache[app.rootDir] = DirectoryCache{}
+		}
+		currentEntry := app.cache[app.rootDir]
+		currentEntry.Includes = app.includes
+		currentEntry.Excludes = app.excludes
+		currentEntry.FilterMode = app.filterMode
+		currentEntry.SortMode = app.sortMode
+		currentEntry.GitFilterMode = app.gitFilterMode
+		currentEntry.LastOpened = time.Now()
+		app.cache[app.rootDir] = currentEntry
+
+		_ = saveCache(app.cacheFilePath, app.cache)
+	}
+
+	app.applyFilters()
+	return nil
+}
+
+func (app *App) CycleGitFilterMode(g *gocui.Gui, v *gocui.View) error {
+	app.mutex.Lock()
+	app.gitFilterMode = (app.gitFilterMode + 1) % 5
+
+	if app.cacheFilePath != "" {
+		if _, ok := app.cache[app.rootDir]; !ok {
+			app.cache[app.rootDir] = DirectoryCache{}
+		}
+		currentEntry := app.cache[app.rootDir]
+		currentEntry.Includes = app.includes
+		currentEntry.Excludes = app.excludes
+		currentEntry.FilterMode = app.filterMode
+		currentEntry.SortMode = app.sortMode
+		currentEntry.GitFilterMode = app.gitFilterMode
+		currentEntry.LastOpened = time.Now()
+		app.cache[app.rootDir] = currentEntry
+
+		_ = saveCache(app.cacheFilePath, app.cache)
+	}
+
+	app.applyFilters()
+	return nil
+}
+
 func (app *App) ToggleHelp(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Lock()
 	app.showHelp = !app.showHelp
@@ -90,95 +218,113 @@ func (app *App) ToggleHelp(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-func (app *App) adjustFilesViewScroll(g *gocui.Gui, v *gocui.View) {
-	if v == nil || v.Name() != FilesViewName {
-		return
+func (app *App) scrollHelp(g *gocui.Gui, amount int) error {
+	v, err := g.View(HelpViewName)
+	if err != nil {
+		return nil
 	}
-
-	app.mutex.Lock()
-	currentLine := app.currentLine
-	totalLines := len(app.fileList)
-	app.mutex.Unlock()
-
 	ox, oy := v.Origin()
-	_, vy := v.Size()
-	margin := 5
-
-	if totalLines <= vy {
-		_ = v.SetOrigin(ox, 0)
-		return
-	}
-
-	newOy := oy
-	if currentLine < oy+margin {
-		newOy = currentLine - margin
-	} else if currentLine >= oy+vy-margin {
-		newOy = currentLine - vy + 1 + margin
-	}
-
+	newOy := oy + amount
 	if newOy < 0 {
 		newOy = 0
 	}
-	if newOy > totalLines-vy {
-		newOy = totalLines - vy
+	return v.SetOrigin(ox, newOy)
+}
+
+func (app *App) ScrollHelpUp(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollHelp(g, -1)
+}
+
+func (app *App) ScrollHelpDown(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollHelp(g, 1)
+}
+
+func (app *App) ScrollHelpPageUp(g *gocui.Gui, v *gocui.View) error {
+	v, err := g.View(HelpViewName)
+	if err != nil {
+		return nil
+	}
+	_, vy := v.Size()
+	return app.scrollHelp(g, -max(1, vy-1))
+}
+
+func (app *App) ScrollHelpPageDown(g *gocui.Gui, v *gocui.View) error {
+	v, err := g.View(HelpViewName)
+	if err != nil {
+		return nil
+	}
+	_, vy := v.Size()
+	return app.scrollHelp(g, max(1, vy-1))
+}
+
+func (app *App) adjustFilesViewScroll(g *gocui.Gui, v *gocui.View) {
+	currentLine := app.currentLine
+
+	if v == nil || v.Name() != FilesViewName {
+		return
+	}
+	ox, oy := v.Origin()
+	_, vy := v.Size()
+
+	if currentLine < oy {
+		newOy := currentLine
+		_ = v.SetOrigin(ox, newOy)
 	}
 
-	if newOy != oy {
+	if currentLine >= oy+vy {
+		newOy := currentLine - vy + 1
 		_ = v.SetOrigin(ox, newOy)
 	}
 }
 
 func (app *App) updateFilterViewContent(g *gocui.Gui) {
+	v, err := g.View(FilterViewName)
+	if err != nil {
+		return
+	}
+
 	app.mutex.Lock()
-	includes := app.includes
-	excludes := app.excludes
+	var value string
+	currentMode := app.filterMode
+	if currentMode == ExcludeMode {
+		value = app.excludes
+	} else {
+		value = app.includes
+	}
 	app.mutex.Unlock()
 
-	currentView := g.CurrentView()
+	v.Clear()
+	fmt.Fprint(v, value)
 
-	if v, err := g.View(FilterIncludeViewName); err == nil {
-		if currentView == nil || currentView.Name() != FilterIncludeViewName {
-			v.Clear()
-			fmt.Fprint(v, includes)
-			content := strings.TrimSuffix(v.Buffer(), "\n")
-			_ = v.SetCursor(len(content), 0)
+	if g.CurrentView() == v && v.Editable {
+		cursorPos := len(value)
+		_ = v.SetCursor(cursorPos, 0)
+
+		maxX, _ := v.Size()
+		ox, _ := v.Origin()
+		if cursorPos < ox {
+			_ = v.SetOrigin(cursorPos, 0)
+		} else if cursorPos >= ox+maxX {
+			_ = v.SetOrigin(cursorPos-maxX+1, 0)
 		}
-		app.adjustFilterCursor(g, v)
-	}
-
-	if v, err := g.View(FilterExcludeViewName); err == nil {
-		if currentView == nil || currentView.Name() != FilterExcludeViewName {
-			v.Clear()
-			fmt.Fprint(v, excludes)
-			content := strings.TrimSuffix(v.Buffer(), "\n")
-			_ = v.SetCursor(len(content), 0)
-		}
-		app.adjustFilterCursor(g, v)
-	}
-}
-
-func (app *App) adjustFilterCursor(g *gocui.Gui, v *gocui.View) {
-	cx, _ := v.Cursor()
-	ox, _ := v.Origin()
-	maxX, _ := v.Size()
-
-	if cx < ox {
-		_ = v.SetOrigin(cx, 0)
-	} else if cx >= ox+maxX {
-		_ = v.SetOrigin(cx-maxX+1, 0)
+	} else {
+		_ = v.SetCursor(0, 0)
+		_ = v.SetOrigin(0, 0)
 	}
 }
 
 func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
-	if v == nil {
+	if v == nil || v.Name() != FilterViewName {
 		return nil
 	}
 
 	app.mutex.Lock()
-	if v.Name() == FilterIncludeViewName {
-		app.includes = strings.TrimSpace(v.Buffer())
-	} else if v.Name() == FilterExcludeViewName {
-		app.excludes = strings.TrimSpace(v.Buffer())
+
+	pattern := strings.TrimSpace(v.Buffer())
+	if app.filterMode == ExcludeMode {
+		app.excludes = pattern
+	} else {
+		app.includes = pattern
 	}
 
 	if app.cacheFilePath != "" {
@@ -190,8 +336,14 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 		currentEntry.Excludes = app.excludes
 		currentEntry.LastOpened = time.Now()
 		currentEntry.FilterMode = app.filterMode
+		currentEntry.SortMode = app.sortMode
+		currentEntry.GitFilterMode = app.gitFilterMode
 		app.cache[app.rootDir] = currentEntry
-		_ = saveCache(app.cacheFilePath, app.cache)
+
+		err := saveCache(app.cacheFilePath, app.cache)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to save cache on ApplyFilter: %v\n", err)
+		}
 	}
 
 	app.applyFilters()
@@ -206,21 +358,8 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *App) CancelFilter(g *gocui.Gui, v *gocui.View) error {
-	if v == nil {
+	if v == nil || v.Name() != FilterViewName {
 		return nil
-	}
-
-	app.mutex.Lock()
-	inc := app.includes
-	exc := app.excludes
-	app.mutex.Unlock()
-
-	if v.Name() == FilterIncludeViewName {
-		v.Clear()
-		fmt.Fprint(v, inc)
-	} else {
-		v.Clear()
-		fmt.Fprint(v, exc)
 	}
 
 	_, err := g.SetCurrentView(FilesViewName)
@@ -267,6 +406,10 @@ func (app *App) CursorDown(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
+	if v == nil || v.Name() != FilterViewName {
+		return nil
+	}
+
 	app.mutex.Lock()
 	if app.filterMode == ExcludeMode {
 		app.filterMode = IncludeMode
@@ -278,27 +421,19 @@ func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
 		if _, ok := app.cache[app.rootDir]; ok {
 			currentEntry := app.cache[app.rootDir]
 			currentEntry.FilterMode = app.filterMode
+			currentEntry.SortMode = app.sortMode
+			currentEntry.GitFilterMode = app.gitFilterMode
 			currentEntry.LastOpened = time.Now()
 			app.cache[app.rootDir] = currentEntry
-			_ = saveCache(app.cacheFilePath, app.cache)
+			err := saveCache(app.cacheFilePath, app.cache)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to save cache on ToggleFilterMode: %v\n", err)
+			}
 		}
 	}
 	app.mutex.Unlock()
 
 	g.Update(func(g *gocui.Gui) error {
-		if app.filterMode == IncludeMode {
-			nv, _ := g.SetCurrentView(FilterIncludeViewName)
-			if nv != nil {
-				content := strings.TrimSuffix(nv.Buffer(), "\n")
-				_ = nv.SetCursor(len(content), 0)
-			}
-		} else {
-			nv, _ := g.SetCurrentView(FilterExcludeViewName)
-			if nv != nil {
-				content := strings.TrimSuffix(nv.Buffer(), "\n")
-				_ = nv.SetCursor(len(content), 0)
-			}
-		}
 		return app.Layout(g)
 	})
 
@@ -315,7 +450,7 @@ func (app *App) ToggleSelect(g *gocui.Gui, v *gocui.View) error {
 		app.mutex.Unlock()
 		return nil
 	}
-	selectedFile := app.fileList[app.currentLine]
+	selectedFile := app.fileList[app.currentLine].RelPath
 	if app.selectedFiles[selectedFile] {
 		delete(app.selectedFiles, selectedFile)
 	} else {
@@ -343,7 +478,7 @@ func (app *App) SelectAllFiles(g *gocui.Gui, v *gocui.View) error {
 		allVisibleSelected = false
 	} else {
 		for _, file := range app.fileList {
-			if !app.selectedFiles[file] {
+			if !app.selectedFiles[file.RelPath] {
 				allVisibleSelected = false
 				break
 			}
@@ -353,12 +488,12 @@ func (app *App) SelectAllFiles(g *gocui.Gui, v *gocui.View) error {
 	statusMsg := ""
 	if allVisibleSelected {
 		for _, file := range app.fileList {
-			delete(app.selectedFiles, file)
+			delete(app.selectedFiles, file.RelPath)
 		}
 		statusMsg = "Deselected all visible files."
 	} else {
 		for _, file := range app.fileList {
-			app.selectedFiles[file] = true
+			app.selectedFiles[file.RelPath] = true
 		}
 		statusMsg = "Selected all visible files."
 	}
@@ -404,7 +539,7 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 	for k, v := range app.selectedFiles {
 		selectedFileCopy[k] = v
 	}
-	fileListCopy := make([]string, len(app.fileList))
+	fileListCopy := make([]FileItem, len(app.fileList))
 	copy(fileListCopy, app.fileList)
 	rootDirCopy := app.rootDir
 
@@ -412,25 +547,27 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 
 	var contentBuilder strings.Builder
 	count := 0
+	var totalTokens int
+	var totalBytes int64
 
-	for _, relPath := range fileListCopy {
-		if selectedFileCopy[relPath] {
-			fullPath := filepath.Join(rootDirCopy, relPath)
+	for _, item := range fileListCopy {
+		if selectedFileCopy[item.RelPath] {
+			fullPath := filepath.Join(rootDirCopy, item.RelPath)
 			fileContent, err := os.ReadFile(fullPath)
-			separator := fmt.Sprintf("==========================\nFILE: %s\n==========================\n", relPath)
-
-			contentBuilder.WriteString(separator)
+			contentStr := string(fileContent)
 			if err != nil {
-				contentBuilder.WriteString(fmt.Sprintf("\n!!! ERROR READING FILE: %v !!!\n\n", err))
-			} else {
-				contentBuilder.WriteString("\n")
-				contentBuilder.WriteString(string(fileContent))
-				if !strings.HasSuffix(string(fileContent), "\n") {
-					contentBuilder.WriteString("\n")
-				}
-				contentBuilder.WriteString("\n")
+				contentStr = fmt.Sprintf("ERROR READING FILE: %v", err)
 			}
+
+			ext := strings.TrimPrefix(filepath.Ext(item.RelPath), ".")
+			if ext == "" {
+				ext = "text"
+			}
+			contentBuilder.WriteString(fmt.Sprintf("### %s\n```%s\n%s\n```\n\n", item.RelPath, ext, contentStr))
+
 			count++
+			totalTokens += item.EstimatedTokens
+			totalBytes += item.SizeBytes
 		}
 	}
 
@@ -441,7 +578,7 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 	if err != nil {
 		statusMsg = "Error copying to clipboard!"
 	} else {
-		statusMsg = fmt.Sprintf("Copied content of %d file(s) to clipboard.", count)
+		statusMsg = fmt.Sprintf("Copied %d file(s) (~%s tokens, %s) to clipboard.", count, formatTokens(totalTokens), formatBytes(totalBytes))
 	}
 
 	if err == nil && count > 0 {
@@ -474,6 +611,13 @@ func (app *App) scrollContent(g *gocui.Gui, amount int) error {
 	v, err := g.View(ContentViewName)
 	if err != nil {
 		return nil
+	}
+
+	if cv := g.CurrentView(); cv != nil && (cv.Name() == FilterViewName || cv.Name() == SearchViewName) {
+		fv, _ := g.View(cv.Name())
+		if fv != nil && fv.Editable {
+			return nil
+		}
 	}
 
 	ox, oy := v.Origin()
@@ -529,4 +673,12 @@ func (app *App) ScrollContentLineDown(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 	return app.scrollContent(g, 1)
+}
+
+func (app *App) DirectScrollContentDown(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollContent(g, 3)
+}
+
+func (app *App) DirectScrollContentUp(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollContent(g, -3)
 }

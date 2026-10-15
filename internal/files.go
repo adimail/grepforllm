@@ -2,10 +2,9 @@ package internal
 
 import (
 	"fmt"
-	"io"
 	"io/fs"
-	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -13,10 +12,105 @@ import (
 	"github.com/awesome-gocui/gocui"
 )
 
-func (app *App) ListFiles() error {
-	app.mutex.Lock()
+var binaryExtensions = map[string]bool{
+	".png":     true,
+	".jpg":     true,
+	".jpeg":    true,
+	".gif":     true,
+	".ico":     true,
+	".webp":    true,
+	".bmp":     true,
+	".tiff":    true,
+	".pdf":     true,
+	".doc":     true,
+	".docx":    true,
+	".xls":     true,
+	".xlsx":    true,
+	".ppt":     true,
+	".pptx":    true,
+	".zip":     true,
+	".tar":     true,
+	".gz":      true,
+	".bz2":     true,
+	".xz":      true,
+	".7z":      true,
+	".rar":     true,
+	".exe":     true,
+	".bin":     true,
+	".dll":     true,
+	".so":      true,
+	".dylib":   true,
+	".o":       true,
+	".a":       true,
+	".lib":     true,
+	".pyc":     true,
+	".class":   true,
+	".woff":    true,
+	".woff2":   true,
+	".ttf":     true,
+	".eot":     true,
+	".otf":     true,
+	".mp3":     true,
+	".mp4":     true,
+	".wav":     true,
+	".flac":    true,
+	".ogg":     true,
+	".mov":     true,
+	".avi":     true,
+	".mkv":     true,
+	".webm":    true,
+	".db":      true,
+	".sqlite":  true,
+	".sqlite3": true,
+	".wasm":    true,
+}
 
-	var files []string
+func (app *App) loadGitStatus() map[string]GitStatus {
+	statusMap := make(map[string]GitStatus)
+	cmd := exec.Command("git", "status", "--porcelain", "-uall")
+	cmd.Dir = app.rootDir
+	out, err := cmd.Output()
+	if err != nil {
+		return statusMap
+	}
+
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if len(line) < 4 {
+			continue
+		}
+		code := line[:2]
+		pathPart := strings.TrimSpace(line[3:])
+		if strings.HasPrefix(pathPart, "\"") && strings.HasSuffix(pathPart, "\"") && len(pathPart) >= 2 {
+			pathPart = pathPart[1 : len(pathPart)-1]
+		}
+		if idx := strings.Index(pathPart, " -> "); idx != -1 {
+			pathPart = pathPart[idx+4:]
+		}
+		pathPart = filepath.ToSlash(pathPart)
+
+		var status GitStatus
+		if code == "??" {
+			status = GitUntracked
+		} else if code[0] == 'M' || code[1] == 'M' || code[0] == 'D' || code[1] == 'D' {
+			status = GitModified
+		} else if code[0] == 'A' || code[0] == 'R' || code[0] == 'C' {
+			status = GitStaged
+		} else {
+			status = GitModified
+		}
+		statusMap[pathPart] = status
+	}
+	return statusMap
+}
+
+func (app *App) ListFiles() error {
+	gitStatusMap := app.loadGitStatus()
+
+	app.mutex.Lock()
+	app.gitStatusMap = gitStatusMap
+
+	var files []FileItem
 	err := filepath.WalkDir(app.rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsPermission(err) {
@@ -36,24 +130,32 @@ func (app *App) ListFiles() error {
 		relPathSlash := filepath.ToSlash(relPath)
 
 		if d.IsDir() {
+			dirName := d.Name()
+			if dirName == ".git" || dirName == "node_modules" || dirName == "vendor" ||
+				dirName == ".next" || dirName == ".nuxt" || dirName == "dist" ||
+				dirName == "build" || dirName == "target" || dirName == ".venv" ||
+				dirName == "__pycache__" {
+				return filepath.SkipDir
+			}
+
 			if app.gitignoreMatcher != nil && app.gitignoreMatcher.Ignore(relPathSlash+"/") {
 				return filepath.SkipDir
 			}
 
-			dirPathWithSlash := relPathSlash + "/"
+			segments := strings.Split(relPathSlash, "/")
 			for _, pattern := range strings.Split(DefaultExcludes, ",") {
 				pattern = strings.TrimSpace(pattern)
 				if pattern == "" || !strings.HasSuffix(pattern, "/") {
 					continue
 				}
-				pattern = filepath.ToSlash(pattern)
-				if strings.HasPrefix(dirPathWithSlash, pattern) {
-					return filepath.SkipDir
+				trimmed := strings.Trim(filepath.ToSlash(pattern), "/")
+				for _, seg := range segments {
+					if seg == trimmed {
+						return filepath.SkipDir
+					}
 				}
 			}
-			if d.Name() == ".git" {
-				return filepath.SkipDir
-			}
+
 			return nil
 		}
 
@@ -65,24 +167,32 @@ func (app *App) ListFiles() error {
 			return nil
 		}
 
-		file, err := os.Open(path)
+		ext := strings.ToLower(filepath.Ext(relPathSlash))
+		if binaryExtensions[ext] {
+			return nil
+		}
+
+		info, err := d.Info()
 		if err != nil {
 			return nil
 		}
-		defer file.Close()
 
-		buffer := make([]byte, 512)
-		n, err := file.Read(buffer)
-		if err != nil && err != io.EOF {
-			return nil
+		size := info.Size()
+		tokens := int(size / 4)
+		if size > 0 && tokens == 0 {
+			tokens = 1
 		}
 
-		contentType := http.DetectContentType(buffer[:n])
-		if !strings.HasPrefix(contentType, "text/") {
-			return nil
-		}
+		status := gitStatusMap[relPathSlash]
 
-		files = append(files, relPathSlash)
+		files = append(files, FileItem{
+			RelPath:         relPathSlash,
+			SizeBytes:       size,
+			ModTime:         info.ModTime(),
+			EstimatedTokens: tokens,
+			GitStatus:       status,
+		})
+
 		return nil
 	})
 	if err != nil {
@@ -90,7 +200,9 @@ func (app *App) ListFiles() error {
 		return fmt.Errorf("error walking directory %s: %w", app.rootDir, err)
 	}
 
-	sort.Strings(files)
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].RelPath < files[j].RelPath
+	})
 	app.allFiles = files
 
 	app.applyFilters()
@@ -100,20 +212,65 @@ func (app *App) ListFiles() error {
 func (app *App) applyFilters() {
 	defer app.mutex.Unlock()
 
-	filteredList := []string{}
+	filteredList := []FileItem{}
 	newSelectedFiles := make(map[string]bool)
 
 	currentFilterMode := app.filterMode
 	currentIncludes := app.includes
 	currentExcludes := app.excludes
+	query := strings.ToLower(strings.TrimSpace(app.searchQuery))
 
 	for _, file := range app.allFiles {
-		if app.shouldIncludeFileByFilters(file, currentFilterMode, currentIncludes, currentExcludes) {
-			filteredList = append(filteredList, file)
-			if app.selectedFiles[file] {
-				newSelectedFiles[file] = true
+		if !app.shouldIncludeFileByFilters(file.RelPath, currentFilterMode, currentIncludes, currentExcludes) {
+			continue
+		}
+
+		if query != "" && !strings.Contains(strings.ToLower(file.RelPath), query) {
+			continue
+		}
+
+		switch app.gitFilterMode {
+		case GitFilterChanged:
+			if file.GitStatus == GitClean {
+				continue
+			}
+		case GitFilterModified:
+			if file.GitStatus != GitModified {
+				continue
+			}
+		case GitFilterUntracked:
+			if file.GitStatus != GitUntracked {
+				continue
+			}
+		case GitFilterStaged:
+			if file.GitStatus != GitStaged {
+				continue
 			}
 		}
+
+		filteredList = append(filteredList, file)
+		if app.selectedFiles[file.RelPath] {
+			newSelectedFiles[file.RelPath] = true
+		}
+	}
+
+	switch app.sortMode {
+	case SortByName:
+		sort.Slice(filteredList, func(i, j int) bool {
+			return filteredList[i].RelPath < filteredList[j].RelPath
+		})
+	case SortBySize:
+		sort.Slice(filteredList, func(i, j int) bool {
+			return filteredList[i].SizeBytes > filteredList[j].SizeBytes
+		})
+	case SortByTokens:
+		sort.Slice(filteredList, func(i, j int) bool {
+			return filteredList[i].EstimatedTokens > filteredList[j].EstimatedTokens
+		})
+	case SortByModTime:
+		sort.Slice(filteredList, func(i, j int) bool {
+			return filteredList[i].ModTime.After(filteredList[j].ModTime)
+		})
 	}
 
 	app.fileList = filteredList
@@ -141,6 +298,8 @@ func (app *App) shouldIncludeFileByFilters(relPath string, filterMode FilterMode
 		dirPath += "/"
 	}
 
+	segments := strings.Split(relPath, "/")
+
 	isDefaultExcluded := false
 	for _, pattern := range strings.Split(DefaultExcludes, ",") {
 		pattern = strings.TrimSpace(pattern)
@@ -150,8 +309,14 @@ func (app *App) shouldIncludeFileByFilters(relPath string, filterMode FilterMode
 		pattern = filepath.ToSlash(pattern)
 
 		if strings.HasSuffix(pattern, "/") {
-			if strings.HasPrefix(dirPath, pattern) {
-				isDefaultExcluded = true
+			trimmed := strings.Trim(pattern, "/")
+			for _, seg := range segments[:len(segments)-1] {
+				if seg == trimmed {
+					isDefaultExcluded = true
+					break
+				}
+			}
+			if isDefaultExcluded {
 				break
 			}
 		} else {
@@ -164,6 +329,48 @@ func (app *App) shouldIncludeFileByFilters(relPath string, filterMode FilterMode
 				break
 			}
 		}
+	}
+
+	if filterMode == IncludeMode {
+		if includes == "" {
+			return !isDefaultExcluded
+		}
+
+		included := false
+		for _, pattern := range strings.Split(includes, ",") {
+			pattern = strings.TrimSpace(pattern)
+			if pattern == "" {
+				continue
+			}
+			pattern = filepath.ToSlash(pattern)
+
+			if strings.HasSuffix(pattern, "/") {
+				trimmed := strings.Trim(pattern, "/")
+				for _, seg := range segments[:len(segments)-1] {
+					if seg == trimmed {
+						included = true
+						break
+					}
+				}
+				if strings.HasPrefix(dirPath, pattern) || (pattern == "/" && dirPath == "") {
+					included = true
+				}
+				if included {
+					break
+				}
+			} else {
+				if matched, _ := filepath.Match(pattern, baseName); matched {
+					included = true
+					break
+				}
+				if matched, _ := filepath.Match(pattern, relPath); matched {
+					included = true
+					break
+				}
+			}
+		}
+
+		return included && !isDefaultExcluded
 	}
 
 	if isDefaultExcluded {
@@ -178,6 +385,12 @@ func (app *App) shouldIncludeFileByFilters(relPath string, filterMode FilterMode
 		pattern = filepath.ToSlash(pattern)
 
 		if strings.HasSuffix(pattern, "/") {
+			trimmed := strings.Trim(pattern, "/")
+			for _, seg := range segments[:len(segments)-1] {
+				if seg == trimmed {
+					return false
+				}
+			}
 			if strings.HasPrefix(dirPath, pattern) || (pattern == "/" && dirPath == "") {
 				return false
 			}
@@ -189,34 +402,6 @@ func (app *App) shouldIncludeFileByFilters(relPath string, filterMode FilterMode
 				return false
 			}
 		}
-	}
-
-	if filterMode == IncludeMode && includes != "" {
-		included := false
-		for _, pattern := range strings.Split(includes, ",") {
-			pattern = strings.TrimSpace(pattern)
-			if pattern == "" {
-				continue
-			}
-			pattern = filepath.ToSlash(pattern)
-
-			if strings.HasSuffix(pattern, "/") {
-				if strings.HasPrefix(dirPath, pattern) || (pattern == "/" && dirPath == "") {
-					included = true
-					break
-				}
-			} else {
-				if matched, _ := filepath.Match(pattern, baseName); matched {
-					included = true
-					break
-				}
-				if matched, _ := filepath.Match(pattern, relPath); matched {
-					included = true
-					break
-				}
-			}
-		}
-		return included
 	}
 
 	return true

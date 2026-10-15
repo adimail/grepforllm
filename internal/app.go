@@ -11,18 +11,18 @@ import (
 )
 
 const (
-	PathViewName          = "path"
-	FilesViewName         = "files"
-	ContentViewName       = "content"
-	HelpViewName          = "help"
-	FilterIncludeViewName = "filter_include"
-	FilterExcludeViewName = "filter_exclude"
-	StatusViewName        = "status"
-	CacheViewName         = "cache"
-	ConfirmViewName       = "confirm"
-	DefaultExcludes       = ".git/,node_modules/"
-	MaxSelectedFiles      = 50
-	MaxFileSizeBytes      = 100 * 1024
+	PathViewName     = "path"
+	FilesViewName    = "files"
+	ContentViewName  = "content"
+	HelpViewName     = "help"
+	FilterViewName   = "filter"
+	SearchViewName   = "search"
+	StatusViewName   = "status"
+	CacheViewName    = "cache"
+	ConfirmViewName  = "confirm"
+	DefaultExcludes  = ".git/,node_modules/,vendor/,.next/,.nuxt/,dist/,build/,target/,.venv/,__pycache__/,*.min.js,*.min.css,*.map,package-lock.json,pnpm-lock.yaml,yarn.lock,Cargo.lock,go.sum,poetry.lock,composer.lock,flake.lock"
+	MaxSelectedFiles = 50
+	MaxFileSizeBytes = 100 * 1024
 )
 
 type FilterMode int
@@ -32,11 +32,49 @@ const (
 	IncludeMode
 )
 
+type SortMode int
+
+const (
+	SortByName SortMode = iota
+	SortBySize
+	SortByTokens
+	SortByModTime
+)
+
+type GitStatus int
+
+const (
+	GitClean GitStatus = iota
+	GitModified
+	GitUntracked
+	GitStaged
+)
+
+type GitFilterMode int
+
+const (
+	GitFilterAll GitFilterMode = iota
+	GitFilterChanged
+	GitFilterModified
+	GitFilterUntracked
+	GitFilterStaged
+)
+
+type FileItem struct {
+	RelPath         string
+	SizeBytes       int64
+	ModTime         time.Time
+	EstimatedTokens int
+	GitStatus       GitStatus
+}
+
 type DirectoryCache struct {
-	Includes   string     `json:"includes"`
-	Excludes   string     `json:"excludes"`
-	LastOpened time.Time  `json:"lastOpened"`
-	FilterMode FilterMode `json:"filterMode"`
+	Includes      string        `json:"includes"`
+	Excludes      string        `json:"excludes"`
+	LastOpened    time.Time     `json:"lastOpened"`
+	FilterMode    FilterMode    `json:"filterMode"`
+	SortMode      SortMode      `json:"sortMode,omitempty"`
+	GitFilterMode GitFilterMode `json:"gitFilterMode,omitempty"`
 }
 
 type AppCache map[string]DirectoryCache
@@ -44,15 +82,20 @@ type AppCache map[string]DirectoryCache
 type App struct {
 	g                *gocui.Gui
 	rootDir          string
-	fileList         []string
-	allFiles         []string
+	fileList         []FileItem
+	allFiles         []FileItem
 	selectedFiles    map[string]bool
 	gitignoreMatcher gitignore.GitIgnore
 	currentLine      int
 	showHelp         bool
 	filterMode       FilterMode
+	sortMode         SortMode
+	gitFilterMode    GitFilterMode
+	gitStatusMap     map[string]GitStatus
 	excludes         string
 	includes         string
+	searchQuery      string
+	isSearchActive   bool
 	mutex            sync.Mutex
 
 	currentlyPreviewedFile string
@@ -64,6 +107,8 @@ type App struct {
 	showCacheView                  bool
 	cacheViewContent               string
 	cacheViewOriginY               int
+	cacheCurrentLine               int
+	cacheTotalLines                int
 	awaitingCacheClearConfirmation bool
 
 	isLoading     bool
@@ -78,13 +123,18 @@ func NewApp(rootDir string) *App {
 		rootDir:                rootDir,
 		selectedFiles:          make(map[string]bool),
 		gitignoreMatcher:       nil,
-		fileList:               []string{},
-		allFiles:               []string{},
+		fileList:               []FileItem{},
+		allFiles:               []FileItem{},
 		currentLine:            0,
 		showHelp:               false,
 		filterMode:             ExcludeMode,
+		sortMode:               SortByName,
+		gitFilterMode:          GitFilterAll,
+		gitStatusMap:           make(map[string]GitStatus),
 		excludes:               DefaultExcludes,
 		includes:               "",
+		searchQuery:            "",
+		isSearchActive:         false,
 		currentlyPreviewedFile: "",
 		contentViewOriginY:     0,
 		cache:                  make(AppCache),
@@ -92,6 +142,8 @@ func NewApp(rootDir string) *App {
 		showCacheView:                  false,
 		cacheViewContent:               "",
 		cacheViewOriginY:               0,
+		cacheCurrentLine:               0,
+		cacheTotalLines:                0,
 		awaitingCacheClearConfirmation: false,
 
 		isLoading:     true,
@@ -116,14 +168,18 @@ func NewApp(rootDir string) *App {
 			app.includes = entry.Includes
 			app.excludes = entry.Excludes
 			app.filterMode = entry.FilterMode
+			app.sortMode = entry.SortMode
+			app.gitFilterMode = entry.GitFilterMode
 			entry.LastOpened = time.Now()
 			app.cache[app.rootDir] = entry
 		} else {
 			app.cache[app.rootDir] = DirectoryCache{
-				Includes:   app.includes,
-				Excludes:   app.excludes,
-				LastOpened: time.Now(),
-				FilterMode: app.filterMode,
+				Includes:      app.includes,
+				Excludes:      app.excludes,
+				LastOpened:    time.Now(),
+				FilterMode:    app.filterMode,
+				SortMode:      app.sortMode,
+				GitFilterMode: app.gitFilterMode,
 			}
 		}
 
@@ -144,7 +200,7 @@ func (app *App) RootDir() string {
 	return app.rootDir
 }
 
-func (app *App) FileList() []string {
+func (app *App) FileList() []FileItem {
 	return app.fileList
 }
 
