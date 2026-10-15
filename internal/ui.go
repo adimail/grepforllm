@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -217,8 +218,8 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 
 func (app *App) layoutHelpView(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
-	helpWidth := maxX * 2 / 3
-	helpHeight := maxY * 2 / 3
+	helpWidth := maxX * 3 / 4
+	helpHeight := maxY * 3 / 4
 	x0, y0 := (maxX-helpWidth)/2, (maxY-helpHeight)/2
 	x1, y1 := x0+helpWidth-1, y0+helpHeight-1
 
@@ -226,44 +227,47 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = " Help (? or Esc or q to Close) "
+		v.Title = " Help (↑/↓/PgUp/PgDn to Scroll | ?/Esc/q to Close) "
 		v.Wrap = true
 		v.Editable = false
+		v.Autoscroll = false
 		v.Frame = true
 		v.FgColor = gocui.ColorWhite
 
 		v.Clear()
 		fmt.Fprintln(v, "grepforllm - Select & Copy File Contents")
-		fmt.Fprintln(v, "----------------------------------------")
+		fmt.Fprintln(v, "----------------------------------------------------")
 		fmt.Fprintln(v, "General:")
-		fmt.Fprintln(v, "  Tab           : Switch focus Files <-> Filter <-> Content")
-		fmt.Fprintln(v, "  ?             : Toggle this help message")
-		fmt.Fprintln(v, "  Ctrl+C        : Show Cache View")
-		fmt.Fprintln(v, "  q             : Quit / Close Help / Close Cache")
-		fmt.Fprintln(v, "  Ctrl+Q        : Force Quit Application")
+		fmt.Fprintln(v, "  Tab                 : Switch focus Files <-> Filter <-> Content")
+		fmt.Fprintln(v, "  ?                   : Toggle this help message")
+		fmt.Fprintln(v, "  Ctrl+C              : Show Cache View")
+		fmt.Fprintln(v, "  q                   : Quit / Close Help / Close Cache")
+		fmt.Fprintln(v, "  Ctrl+Q              : Force Quit Application")
 		fmt.Fprintln(v, "\nFiles View (Left):")
-		fmt.Fprintln(v, "  ↑ / k         : Move cursor up")
-		fmt.Fprintln(v, "  ↓ / j         : Move cursor down")
-		fmt.Fprintln(v, "  Enter         : Focus Content View for scrolling")
-		fmt.Fprintln(v, "  Space         : Toggle select file under cursor")
-		fmt.Fprintln(v, "  a             : Select / Deselect all visible files")
-		fmt.Fprintln(v, "  c / y         : Copy contents of selected files to clipboard")
+		fmt.Fprintln(v, "  ↑ / k               : Move cursor up")
+		fmt.Fprintln(v, "  ↓ / j               : Move cursor down")
+		fmt.Fprintln(v, "  J / K               : Scroll Content preview DOWN / UP directly")
+		fmt.Fprintln(v, "  Ctrl+J / Ctrl+K     : Scroll Content preview DOWN / UP directly")
+		fmt.Fprintln(v, "  Enter               : Focus Content View for line scrolling")
+		fmt.Fprintln(v, "  Space               : Toggle select file under cursor")
+		fmt.Fprintln(v, "  a                   : Select / Deselect all visible files")
+		fmt.Fprintln(v, "  c / y               : Copy contents of selected files to clipboard")
 		fmt.Fprintln(v, "\nContent View (Right):")
-		fmt.Fprintln(v, "  ↑ / k         : Scroll content UP one line (when focused)")
-		fmt.Fprintln(v, "  ↓ / j         : Scroll content DOWN one line (when focused)")
-		fmt.Fprintln(v, "  PgUp / Ctrl+B : Scroll content UP one page (works globally)")
-		fmt.Fprintln(v, "  PgDn          : Scroll content DOWN one page (works globally)")
+		fmt.Fprintln(v, "  ↑ / k               : Scroll content UP one line (when focused)")
+		fmt.Fprintln(v, "  ↓ / j               : Scroll content DOWN one line (when focused)")
+		fmt.Fprintln(v, "  PgUp / Ctrl+B       : Scroll content UP one page (works globally)")
+		fmt.Fprintln(v, "  PgDn                : Scroll content DOWN one page (works globally)")
 		fmt.Fprintln(v, "\nFilter View (Bottom-Left):")
 		fmt.Fprintln(v, "  (Type patterns: *.go, cmd/, file.txt)")
-		fmt.Fprintln(v, "  Enter         : Apply filter & return focus to Files")
-		fmt.Fprintln(v, "  Esc           : Cancel input & return focus to Files")
-		fmt.Fprintln(v, "  Ctrl+F        : Toggle filter mode (Include/Exclude)")
+		fmt.Fprintln(v, "  Enter               : Apply filter & return focus to Files")
+		fmt.Fprintln(v, "  Esc                 : Cancel input & return focus to Files")
+		fmt.Fprintln(v, "  Ctrl+F              : Toggle filter mode (Include/Exclude)")
 		fmt.Fprintln(v, "\nCache View (Ctrl+C):")
-		fmt.Fprintln(v, "  ↑ / k / ↓ / j : Scroll Line")
-		fmt.Fprintln(v, "  PgUp / PgDn   : Scroll Page")
-		fmt.Fprintln(v, "  Ctrl+D        : Prompt to clear cache")
-		fmt.Fprintln(v, "  y / n         : Confirm / Cancel cache clear")
-		fmt.Fprintln(v, "  Esc / q       : Close Cache View")
+		fmt.Fprintln(v, "  ↑ / k / ↓ / j       : Scroll Line")
+		fmt.Fprintln(v, "  PgUp / PgDn         : Scroll Page")
+		fmt.Fprintln(v, "  Ctrl+D              : Prompt to clear cache")
+		fmt.Fprintln(v, "  y / n               : Confirm / Cancel cache clear")
+		fmt.Fprintln(v, "  Esc / q             : Close Cache View")
 
 		if _, err := g.SetCurrentView(HelpViewName); err != nil {
 			return err
@@ -305,9 +309,9 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		cv.Title = " Cache Contents (cache.json) "
+		cv.Title = " Project Cache History "
 		cv.Editable = false
-		cv.Wrap = true
+		cv.Wrap = false
 		cv.Autoscroll = false
 		cv.Frame = true
 		cv.FgColor = gocui.ColorWhite
@@ -470,6 +474,7 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		v.Title = " Content - PgUp/PgDn Scroll "
 		fmt.Fprintln(v, "\nNo file selected or list is empty.")
 		fmt.Fprintln(v, "\nUse ↑ / ↓ to navigate files.")
+		fmt.Fprintln(v, "[J] / [K] : Scroll preview directly")
 		fmt.Fprintln(v, "[Enter]   : Focus this view for scrolling (j/k)")
 		fmt.Fprintln(v, "[Space]   : Toggle select file")
 		fmt.Fprintln(v, "[c] / [y] : Copy selected files")
@@ -484,9 +489,27 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 	}
 
 	fullPath := filepath.Join(rootDir, currentFileItem.RelPath)
-	fileContentBytes, readErr := os.ReadFile(fullPath)
+	const previewLimit = 256 * 1024
 
-	v.Title = fmt.Sprintf(" Content: %s (%s, ~%s tok) - PgUp/PgDn Scroll ",
+	file, readErr := os.Open(fullPath)
+	var fileContentBytes []byte
+	isTruncated := false
+
+	if readErr == nil {
+		buffer := make([]byte, previewLimit)
+		n, err := io.ReadFull(file, buffer)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			readErr = err
+		} else {
+			fileContentBytes = buffer[:n]
+			if currentFileItem.SizeBytes > int64(n) {
+				isTruncated = true
+			}
+		}
+		_ = file.Close()
+	}
+
+	v.Title = fmt.Sprintf(" Content: %s (%s, ~%s tok) - PgUp/PgDn / J/K Scroll ",
 		currentFileItem.RelPath, formatBytes(currentFileItem.SizeBytes), formatTokens(currentFileItem.EstimatedTokens))
 
 	if readErr != nil {
@@ -497,6 +520,10 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 		fmt.Fprintf(v, "(Binary File: %s)", currentFileItem.RelPath)
 	} else {
 		fmt.Fprint(v, string(fileContentBytes))
+		if isTruncated {
+			fmt.Fprintf(v, "\n\n--- [Preview Truncated: File is %s, showing first %s] ---\n",
+				formatBytes(currentFileItem.SizeBytes), formatBytes(previewLimit))
+		}
 	}
 
 	app.mutex.Lock()

@@ -72,6 +72,45 @@ func (app *App) ToggleHelp(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
+func (app *App) scrollHelp(g *gocui.Gui, amount int) error {
+	v, err := g.View(HelpViewName)
+	if err != nil {
+		return nil
+	}
+	ox, oy := v.Origin()
+	newOy := oy + amount
+	if newOy < 0 {
+		newOy = 0
+	}
+	return v.SetOrigin(ox, newOy)
+}
+
+func (app *App) ScrollHelpUp(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollHelp(g, -1)
+}
+
+func (app *App) ScrollHelpDown(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollHelp(g, 1)
+}
+
+func (app *App) ScrollHelpPageUp(g *gocui.Gui, v *gocui.View) error {
+	v, err := g.View(HelpViewName)
+	if err != nil {
+		return nil
+	}
+	_, vy := v.Size()
+	return app.scrollHelp(g, -max(1, vy-1))
+}
+
+func (app *App) ScrollHelpPageDown(g *gocui.Gui, v *gocui.View) error {
+	v, err := g.View(HelpViewName)
+	if err != nil {
+		return nil
+	}
+	_, vy := v.Size()
+	return app.scrollHelp(g, max(1, vy-1))
+}
+
 func (app *App) adjustFilesViewScroll(g *gocui.Gui, v *gocui.View) {
 	currentLine := app.currentLine
 
@@ -486,4 +525,12 @@ func (app *App) ScrollContentLineDown(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 	return app.scrollContent(g, 1)
+}
+
+func (app *App) DirectScrollContentDown(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollContent(g, 3)
+}
+
+func (app *App) DirectScrollContentUp(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollContent(g, -3)
 }
