@@ -67,7 +67,7 @@ var binaryExtensions = map[string]bool{
 func (app *App) ListFiles() error {
 	app.mutex.Lock()
 
-	var files []string
+	var files []FileItem
 	err := filepath.WalkDir(app.rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsPermission(err) {
@@ -126,7 +126,24 @@ func (app *App) ListFiles() error {
 			return nil
 		}
 
-		files = append(files, relPathSlash)
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+
+		size := info.Size()
+		tokens := int(size / 4)
+		if size > 0 && tokens == 0 {
+			tokens = 1
+		}
+
+		files = append(files, FileItem{
+			RelPath:         relPathSlash,
+			SizeBytes:       size,
+			ModTime:         info.ModTime(),
+			EstimatedTokens: tokens,
+		})
+
 		return nil
 	})
 	if err != nil {
@@ -134,7 +151,9 @@ func (app *App) ListFiles() error {
 		return fmt.Errorf("error walking directory %s: %w", app.rootDir, err)
 	}
 
-	sort.Strings(files)
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].RelPath < files[j].RelPath
+	})
 	app.allFiles = files
 
 	app.applyFilters()
@@ -144,7 +163,7 @@ func (app *App) ListFiles() error {
 func (app *App) applyFilters() {
 	defer app.mutex.Unlock()
 
-	filteredList := []string{}
+	filteredList := []FileItem{}
 	newSelectedFiles := make(map[string]bool)
 
 	currentFilterMode := app.filterMode
@@ -152,10 +171,10 @@ func (app *App) applyFilters() {
 	currentExcludes := app.excludes
 
 	for _, file := range app.allFiles {
-		if app.shouldIncludeFileByFilters(file, currentFilterMode, currentIncludes, currentExcludes) {
+		if app.shouldIncludeFileByFilters(file.RelPath, currentFilterMode, currentIncludes, currentExcludes) {
 			filteredList = append(filteredList, file)
-			if app.selectedFiles[file] {
-				newSelectedFiles[file] = true
+			if app.selectedFiles[file.RelPath] {
+				newSelectedFiles[file.RelPath] = true
 			}
 		}
 	}

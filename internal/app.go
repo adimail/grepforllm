@@ -31,6 +31,13 @@ const (
 	IncludeMode
 )
 
+type FileItem struct {
+	RelPath         string
+	SizeBytes       int64
+	ModTime         time.Time
+	EstimatedTokens int
+}
+
 type DirectoryCache struct {
 	Includes   string     `json:"includes"`
 	Excludes   string     `json:"excludes"`
@@ -43,8 +50,8 @@ type AppCache map[string]DirectoryCache
 type App struct {
 	g                *gocui.Gui
 	rootDir          string
-	fileList         []string
-	allFiles         []string
+	fileList         []FileItem
+	allFiles         []FileItem
 	selectedFiles    map[string]bool
 	gitignoreMatcher gitignore.GitIgnore
 	currentLine      int
@@ -77,8 +84,8 @@ func NewApp(rootDir string) *App {
 		rootDir:                rootDir,
 		selectedFiles:          make(map[string]bool),
 		gitignoreMatcher:       nil,
-		fileList:               []string{},
-		allFiles:               []string{},
+		fileList:               []FileItem{},
+		allFiles:               []FileItem{},
 		currentLine:            0,
 		showHelp:               false,
 		filterMode:             ExcludeMode,
@@ -143,7 +150,7 @@ func (app *App) RootDir() string {
 	return app.rootDir
 }
 
-func (app *App) FileList() []string {
+func (app *App) FileList() []FileItem {
 	return app.fileList
 }
 

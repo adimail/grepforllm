@@ -383,7 +383,7 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 		app.currentLine = 0
 	}
 
-	currentFileList := make([]string, totalCount)
+	currentFileList := make([]FileItem, totalCount)
 	copy(currentFileList, app.fileList)
 	currentSelectedFiles := make(map[string]bool, selectedCount)
 	for k, val := range app.selectedFiles {
@@ -397,13 +397,13 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 	v.Title = title
 
 	for i, file := range currentFileList {
-		isSelected := currentSelectedFiles[file]
+		isSelected := currentSelectedFiles[file.RelPath]
 		isCurrent := (i == currentLine)
 		prefix := "[ ]"
 		if isSelected {
 			prefix = "[*]"
 		}
-		line := fmt.Sprintf("%s %s", prefix, file)
+		line := fmt.Sprintf("%s %s", prefix, file.RelPath)
 
 		switch {
 		case isCopyHighlightActive && isSelected:
@@ -439,7 +439,7 @@ func (app *App) refreshContentView(g *gocui.Gui) {
 	fileListLen := len(app.fileList)
 	var fileToPreviewRelPath string
 	if fileListLen > 0 && currentLine >= 0 && currentLine < fileListLen {
-		fileToPreviewRelPath = app.fileList[currentLine]
+		fileToPreviewRelPath = app.fileList[currentLine].RelPath
 	}
 	rootDir := app.rootDir
 	previousPreviewedFile := app.currentlyPreviewedFile
