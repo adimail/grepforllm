@@ -34,7 +34,8 @@ func main() {
 	}
 
 	// --- Initialize App State ---
-	app := internal.NewApp(absRootDir) // isLoading is true initially
+	app := internal.NewApp(absRootDir)
+	defer app.Close()
 
 	// --- Load Gitignore (Synchronous, relatively fast) ---
 	matcher, err := internal.LoadGitignoreMatcher(app.RootDir())
@@ -67,6 +68,8 @@ func main() {
 	}
 
 	// --- Start Asynchronous File Loading ---
+	app.StartWatcher()
+
 	go func() {
 		err := app.ListFiles()
 

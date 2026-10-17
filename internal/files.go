@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/awesome-gocui/gocui"
+	"github.com/fsnotify/fsnotify"
 )
 
 func (app *App) loadGitStatus() map[string]GitStatus {
@@ -47,11 +49,131 @@ func (app *App) loadGitStatus() map[string]GitStatus {
 	return statusMap
 }
 
+func (app *App) isIgnoredDirName(dirName string) bool {
+	return dirName == ".git" || dirName == "node_modules" || dirName == "vendor" ||
+		dirName == ".next" || dirName == ".nuxt" || dirName == "dist" ||
+		dirName == "build" || dirName == "target" || dirName == ".venv" ||
+		dirName == "__pycache__"
+}
+
+func (app *App) isPathIgnored(path string) bool {
+	relPath, err := filepath.Rel(app.rootDir, path)
+	if err != nil {
+		return true
+	}
+	relPathSlash := filepath.ToSlash(relPath)
+	segments := strings.Split(relPathSlash, "/")
+
+	for _, seg := range segments {
+		if app.isIgnoredDirName(seg) {
+			return true
+		}
+	}
+
+	for _, pattern := range strings.Split(DefaultExcludes, ",") {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" || !strings.HasSuffix(pattern, "/") {
+			continue
+		}
+		trimmed := strings.Trim(filepath.ToSlash(pattern), "/")
+		for _, seg := range segments {
+			if seg == trimmed {
+				return true
+			}
+		}
+	}
+
+	app.mutex.Lock()
+	matcher := app.gitignoreMatcher
+	app.mutex.Unlock()
+
+	if matcher != nil && (matcher.Ignore(relPathSlash) || matcher.Ignore(relPathSlash+"/")) {
+		return true
+	}
+
+	return false
+}
+
+func (app *App) watchDirRecursively(dir string) {
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		if app.isPathIgnored(path) {
+			return filepath.SkipDir
+		}
+		app.mutex.Lock()
+		if app.watcher != nil && !app.watchedDirs[path] {
+			if err := app.watcher.Add(path); err == nil {
+				app.watchedDirs[path] = true
+			}
+		}
+		app.mutex.Unlock()
+		return nil
+	})
+}
+
+func (app *App) StartWatcher() {
+	if app.watcher == nil {
+		return
+	}
+
+	go func() {
+		var timer *time.Timer
+		var timerCh <-chan time.Time
+
+		for {
+			select {
+			case <-app.watcherDone:
+				if timer != nil {
+					timer.Stop()
+				}
+				return
+			case event, ok := <-app.watcher.Events:
+				if !ok {
+					return
+				}
+
+				if app.isPathIgnored(event.Name) {
+					continue
+				}
+
+				if event.Op&fsnotify.Create != 0 {
+					if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
+						app.watchDirRecursively(event.Name)
+					}
+				}
+
+				if timer != nil {
+					timer.Stop()
+				}
+				timer = time.NewTimer(200 * time.Millisecond)
+				timerCh = timer.C
+
+			case <-timerCh:
+				timerCh = nil
+				go func() {
+					_ = app.ListFiles()
+				}()
+
+			case _, ok := <-app.watcher.Errors:
+				if !ok {
+					return
+				}
+			}
+		}
+	}()
+}
+
 func (app *App) ListFiles() error {
+	app.scanMutex.Lock()
+	defer app.scanMutex.Unlock()
+
 	gitStatusMap := app.loadGitStatus()
 
 	app.mutex.Lock()
-	app.gitStatusMap = gitStatusMap
+	matcher := app.gitignoreMatcher
+	app.mutex.Unlock()
 
 	var files []FileItem
 	err := filepath.WalkDir(app.rootDir, func(path string, d fs.DirEntry, err error) error {
@@ -63,6 +185,13 @@ func (app *App) ListFiles() error {
 		}
 
 		if path == app.rootDir {
+			app.mutex.Lock()
+			if app.watcher != nil && !app.watchedDirs[path] {
+				if err := app.watcher.Add(path); err == nil {
+					app.watchedDirs[path] = true
+				}
+			}
+			app.mutex.Unlock()
 			return nil
 		}
 
@@ -74,14 +203,11 @@ func (app *App) ListFiles() error {
 
 		if d.IsDir() {
 			dirName := d.Name()
-			if dirName == ".git" || dirName == "node_modules" || dirName == "vendor" ||
-				dirName == ".next" || dirName == ".nuxt" || dirName == "dist" ||
-				dirName == "build" || dirName == "target" || dirName == ".venv" ||
-				dirName == "__pycache__" {
+			if app.isIgnoredDirName(dirName) {
 				return filepath.SkipDir
 			}
 
-			if app.gitignoreMatcher != nil && app.gitignoreMatcher.Ignore(relPathSlash+"/") {
+			if matcher != nil && matcher.Ignore(relPathSlash+"/") {
 				return filepath.SkipDir
 			}
 
@@ -99,6 +225,14 @@ func (app *App) ListFiles() error {
 				}
 			}
 
+			app.mutex.Lock()
+			if app.watcher != nil && !app.watchedDirs[path] {
+				if err := app.watcher.Add(path); err == nil {
+					app.watchedDirs[path] = true
+				}
+			}
+			app.mutex.Unlock()
+
 			return nil
 		}
 
@@ -107,7 +241,7 @@ func (app *App) ListFiles() error {
 			return nil
 		}
 
-		if app.gitignoreMatcher != nil && app.gitignoreMatcher.Ignore(relPathSlash) {
+		if matcher != nil && matcher.Ignore(relPathSlash) {
 			return nil
 		}
 
@@ -148,15 +282,16 @@ func (app *App) ListFiles() error {
 		return nil
 	})
 	if err != nil {
-		app.mutex.Unlock()
 		return fmt.Errorf("error walking directory %s: %w", app.rootDir, err)
 	}
 
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].RelPath < files[j].RelPath
 	})
-	app.allFiles = files
 
+	app.mutex.Lock()
+	app.gitStatusMap = gitStatusMap
+	app.allFiles = files
 	app.applyFilters()
 	return nil
 }

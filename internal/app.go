@@ -8,6 +8,7 @@ import (
 
 	"github.com/awesome-gocui/gocui"
 	"github.com/denormal/go-gitignore"
+	"github.com/fsnotify/fsnotify"
 )
 
 const (
@@ -96,6 +97,7 @@ type App struct {
 	searchQuery      string
 	isSearchActive   bool
 	mutex            sync.Mutex
+	scanMutex        sync.Mutex
 
 	currentlyPreviewedFile string
 	contentViewOriginY     int
@@ -115,9 +117,15 @@ type App struct {
 	loadStartTime time.Time
 
 	isCopyHighlightActive bool
+
+	watcher     *fsnotify.Watcher
+	watcherDone chan struct{}
+	watchedDirs map[string]bool
 }
 
 func NewApp(rootDir string) *App {
+	watcher, _ := fsnotify.NewWatcher()
+
 	app := &App{
 		rootDir:                rootDir,
 		selectedFiles:          make(map[string]bool),
@@ -150,6 +158,10 @@ func NewApp(rootDir string) *App {
 		loadStartTime: time.Now(),
 
 		isCopyHighlightActive: false,
+
+		watcher:     watcher,
+		watcherDone: make(chan struct{}),
+		watchedDirs: make(map[string]bool),
 	}
 
 	var err error
@@ -219,6 +231,17 @@ func (app *App) SetGitignoreMatcher(matcher gitignore.GitIgnore) {
 	app.mutex.Lock()
 	defer app.mutex.Unlock()
 	app.gitignoreMatcher = matcher
+}
+
+func (app *App) Close() {
+	if app.watcher != nil {
+		select {
+		case <-app.watcherDone:
+		default:
+			close(app.watcherDone)
+		}
+		_ = app.watcher.Close()
+	}
 }
 
 func (app *App) saveCurrentStateToCache() {
