@@ -290,7 +290,6 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 	}
 
 	app.mutex.Lock()
-
 	pattern := strings.TrimSpace(v.Buffer())
 	if app.filterMode == ExcludeMode {
 		app.excludes = pattern
@@ -552,7 +551,6 @@ func (app *App) CopyAllSelected(g *gocui.Gui, v *gocui.View) error {
 	}
 
 	app.updateStatus(g, statusMsg)
-
 	return nil
 }
 
@@ -630,4 +628,40 @@ func (app *App) DirectScrollContentDown(g *gocui.Gui, v *gocui.View) error {
 
 func (app *App) DirectScrollContentUp(g *gocui.Gui, v *gocui.View) error {
 	return app.scrollContent(g, -3)
+}
+
+func (app *App) OnFilesMouseClick(g *gocui.Gui, v *gocui.View) error {
+	if v == nil {
+		return nil
+	}
+	_, cy := v.Cursor()
+	_, oy := v.Origin()
+	clickedIndex := oy + cy
+
+	app.mutex.Lock()
+	if clickedIndex >= 0 && clickedIndex < len(app.fileList) {
+		app.currentLine = clickedIndex
+	}
+	app.mutex.Unlock()
+
+	_, _ = g.SetCurrentView(FilesViewName)
+	app.refreshFilesView(g)
+	app.refreshContentView(g)
+	return nil
+}
+
+func (app *App) OnFilesMouseWheelUp(g *gocui.Gui, v *gocui.View) error {
+	return app.CursorUp(g, v)
+}
+
+func (app *App) OnFilesMouseWheelDown(g *gocui.Gui, v *gocui.View) error {
+	return app.CursorDown(g, v)
+}
+
+func (app *App) OnContentMouseWheelUp(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollContent(g, -3)
+}
+
+func (app *App) OnContentMouseWheelDown(g *gocui.Gui, v *gocui.View) error {
+	return app.scrollContent(g, 3)
 }

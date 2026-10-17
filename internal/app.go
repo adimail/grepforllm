@@ -12,18 +12,21 @@ import (
 )
 
 const (
-	PathViewName     = "path"
-	FilesViewName    = "files"
-	ContentViewName  = "content"
-	HelpViewName     = "help"
-	FilterViewName   = "filter"
-	SearchViewName   = "search"
-	StatusViewName   = "status"
-	CacheViewName    = "cache"
-	ConfirmViewName  = "confirm"
-	DefaultExcludes  = ".git/,node_modules/,vendor/,.next/,.nuxt/,dist/,build/,target/,.venv/,__pycache__/,*.min.js,*.min.css,*.map,package-lock.json,pnpm-lock.yaml,yarn.lock,Cargo.lock,go.sum,poetry.lock,composer.lock,flake.lock"
-	MaxSelectedFiles = 50
-	MaxFileSizeBytes = 100 * 1024
+	PathViewName        = "path"
+	FilesViewName       = "files"
+	ContentViewName     = "content"
+	HelpViewName        = "help"
+	FilterViewName      = "filter"
+	SearchViewName      = "search"
+	StatusViewName      = "status"
+	CacheViewName       = "cache"
+	CacheHeaderViewName = "cache_header"
+	CacheListViewName   = "cache_list"
+	CacheDetailViewName = "cache_detail"
+	ConfirmViewName     = "confirm"
+	DefaultExcludes     = ".git/,node_modules/,vendor/,.next/,.nuxt/,dist/,build/,target/,.venv/,venv/,__pycache__/,*.min.js,*.min.css,*.map,package-lock.json,pnpm-lock.yaml,yarn.lock,Cargo.lock,go.sum,poetry.lock,composer.lock,flake.lock,*.lock,*.svg"
+	MaxSelectedFiles    = 50
+	MaxFileSizeBytes    = 100 * 1024
 )
 
 type FilterMode int
@@ -105,12 +108,13 @@ type App struct {
 	cache         AppCache
 	cacheFilePath string
 
-	showCacheView                  bool
-	cacheViewContent               string
-	cacheViewOriginY               int
-	cacheCurrentLine               int
-	cacheTotalLines                int
-	awaitingCacheClearConfirmation bool
+	showCacheView                   bool
+	cachePaths                      []string
+	selectedCacheEntries            map[string]bool
+	cacheCurrentLine                int
+	cacheViewOriginY                int
+	awaitingCacheClearConfirmation  bool
+	awaitingCacheDeleteConfirmation bool
 
 	isLoading     bool
 	loadingError  error
@@ -146,12 +150,13 @@ func NewApp(rootDir string) *App {
 		contentViewOriginY:     0,
 		cache:                  make(AppCache),
 
-		showCacheView:                  false,
-		cacheViewContent:               "",
-		cacheViewOriginY:               0,
-		cacheCurrentLine:               0,
-		cacheTotalLines:                0,
-		awaitingCacheClearConfirmation: false,
+		showCacheView:                   false,
+		cachePaths:                      []string{},
+		selectedCacheEntries:            make(map[string]bool),
+		cacheCurrentLine:                0,
+		cacheViewOriginY:                0,
+		awaitingCacheClearConfirmation:  false,
+		awaitingCacheDeleteConfirmation: false,
 
 		isLoading:     true,
 		loadingError:  nil,

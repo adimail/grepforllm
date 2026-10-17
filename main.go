@@ -48,7 +48,7 @@ func main() {
 	}
 
 	// --- Initialize gocui ---
-	g, err := gocui.NewGui(gocui.OutputNormal, true)
+	g, err := gocui.NewGui(gocui.OutputNormal, false)
 	if err != nil {
 		log.Panicln(err)
 	}
@@ -58,6 +58,7 @@ func main() {
 	g.SelFgColor = gocui.ColorMagenta
 	g.SelBgColor = gocui.ColorDefault
 	g.Cursor = true
+	g.Mouse = true
 
 	// --- Configure and Run App ---
 	app.SetGui(g)

@@ -41,7 +41,9 @@ func (app *App) Layout(g *gocui.Gui) error {
 func (app *App) GrepApplicationView(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
 
-	_ = g.DeleteView(CacheViewName)
+	_ = g.DeleteView(CacheHeaderViewName)
+	_ = g.DeleteView(CacheListViewName)
+	_ = g.DeleteView(CacheDetailViewName)
 	_ = g.DeleteView("loading")
 	_ = g.DeleteView("error")
 
@@ -105,7 +107,7 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 		v.Wrap = false
 		v.Autoscroll = false
 
-		if g.CurrentView() == nil || currentViewName == CacheViewName {
+		if g.CurrentView() == nil || currentViewName == CacheListViewName {
 			if _, err := g.SetCurrentView(FilesViewName); err != nil {
 				return err
 			}
@@ -252,9 +254,10 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 		v.BgColor = gocui.ColorDefault
 	}
 	app.mutex.Lock()
-	awaitingConfirm := app.awaitingCacheClearConfirmation
+	awaitingClr := app.awaitingCacheClearConfirmation
+	awaitingDel := app.awaitingCacheDeleteConfirmation
 	app.mutex.Unlock()
-	if !awaitingConfirm {
+	if !awaitingClr && !awaitingDel {
 		app.resetStatus(g)
 	}
 
@@ -299,6 +302,7 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		fmt.Fprintln(v, pad("  Ctrl+F              : Toggle filter mode (Include/Exclude)"))
 		fmt.Fprintln(v, pad("  q                   : Quit / Close Modal"))
 		fmt.Fprintln(v, pad("  Ctrl+Q              : Force Quit Application"))
+		fmt.Fprintln(v, pad("  Mouse               : Click to focus/select, scroll wheel to navigate"))
 		fmt.Fprintln(v, pad(""))
 		fmt.Fprintln(v, pad("Files View (Left):"))
 		fmt.Fprintln(v, pad("  ↑ / k               : Move cursor up"))
@@ -314,7 +318,6 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		fmt.Fprintln(v, pad("  c / y               : Copy selected files to clipboard"))
 		fmt.Fprintln(v, pad(""))
 		fmt.Fprintln(v, pad("Search Section (Press / to open):"))
-		fmt.Fprintln(v, pad("  (Type file name query - filters list live as you type)"))
 		fmt.Fprintln(v, pad("  Enter               : Keep search & return focus to Files"))
 		fmt.Fprintln(v, pad("  Esc                 : Clear search, close panel & return to Files"))
 		fmt.Fprintln(v, pad(""))
@@ -326,16 +329,17 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		fmt.Fprintln(v, pad("  PgDn                : Scroll content DOWN one page"))
 		fmt.Fprintln(v, pad(""))
 		fmt.Fprintln(v, pad("Filter View (Bottom-Left):"))
-		fmt.Fprintln(v, pad("  (Type patterns: *.go, cmd/, file.txt)"))
 		fmt.Fprintln(v, pad("  Enter               : Apply filter & return focus to Files"))
 		fmt.Fprintln(v, pad("  Esc                 : Cancel input & return focus to Files"))
 		fmt.Fprintln(v, pad("  Ctrl+F              : Toggle filter mode (Include/Exclude)"))
 		fmt.Fprintln(v, pad(""))
 		fmt.Fprintln(v, pad("Cache View (Ctrl+C):"))
-		fmt.Fprintln(v, pad("  ↑ / k / ↓ / j       : Move cursor line across history"))
-		fmt.Fprintln(v, pad("  PgUp / PgDn         : Scroll Page"))
-		fmt.Fprintln(v, pad("  Ctrl+D              : Prompt to clear cache"))
-		fmt.Fprintln(v, pad("  y / n               : Confirm / Cancel cache clear"))
+		fmt.Fprintln(v, pad("  ↑ / k / ↓ / j       : Move cursor across history"))
+		fmt.Fprintln(v, pad("  Space               : Toggle select directory entry"))
+		fmt.Fprintln(v, pad("  a                   : Select / Deselect all entries"))
+		fmt.Fprintln(v, pad("  d / x               : Delete selected entries (or highlighted)"))
+		fmt.Fprintln(v, pad("  Ctrl+D              : Prompt to clear entire cache"))
+		fmt.Fprintln(v, pad("  y / n               : Confirm / Cancel deletion"))
 		fmt.Fprintln(v, pad("  Esc / q             : Close Cache View"))
 
 		if _, err := g.SetCurrentView(HelpViewName); err != nil {
@@ -358,62 +362,75 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 
 	viewsToDelete := []string{
 		FilesViewName, ContentViewName, FilterViewName, SearchViewName, PathViewName,
-		HelpViewName,
-		"loading",
-		"error",
+		HelpViewName, "loading", "error",
 	}
 	for _, viewName := range viewsToDelete {
 		_ = g.DeleteView(viewName)
 	}
 
-	cacheViewY1 := maxY - 2
+	x0 := 1
+	y0 := 1
+	x1 := maxX - 2
+	y1 := maxY - 3
 
-	app.mutex.Lock()
-	cacheContent := app.cacheViewContent
-	cacheOriginY := app.cacheViewOriginY
-	cacheCurLine := app.cacheCurrentLine
-	awaitingConfirm := app.awaitingCacheClearConfirmation
-	app.mutex.Unlock()
+	headerHeight := 2
+	headerY1 := y0 + headerHeight
 
-	if cv, err := g.SetView(CacheViewName, 0, 0, maxX-1, cacheViewY1, gocui.TOP); err != nil {
+	if hv, err := g.SetView(CacheHeaderViewName, x0, y0, x1, headerY1, gocui.TOP); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		cv.Title = " Project Cache History "
-		cv.Editable = false
-		cv.Wrap = false
-		cv.Autoscroll = false
-		cv.Frame = true
-		cv.Highlight = true
-		cv.SelBgColor = gocui.ColorCyan
-		cv.SelFgColor = gocui.ColorBlack
-		cv.FgColor = gocui.ColorWhite
+		hv.Frame = true
+		hv.Editable = false
+		hv.Wrap = false
+		hv.Title = " Project Cache History "
+		hv.FrameColor = gocui.ColorCyan
+		hv.FgColor = gocui.ColorCyan | gocui.AttrBold
+	}
+	if hv, err := g.View(CacheHeaderViewName); err == nil {
+		hv.Clear()
+		fmt.Fprintf(hv, " Total Projects: %-4d | Selected: %-4d | Space: Select | a: All | d/x: Delete | Ctrl+D: Clear All",
+			len(app.cachePaths), len(app.selectedCacheEntries))
+	}
 
-		cv.Clear()
-		fmt.Fprint(cv, cacheContent)
-		_ = cv.SetOrigin(0, cacheOriginY)
-		_ = cv.SetCursor(0, cacheCurLine)
+	contentY0 := headerY1 + 1
 
-		if _, err := g.SetCurrentView(CacheViewName); err != nil {
+	totalWidth := x1 - x0
+	leftWidth := totalWidth * 42 / 100
+
+	listX0 := x0
+	listX1 := listX0 + leftWidth
+
+	detailX0 := listX1 + 2
+	detailX1 := x1
+
+	if lv, err := g.SetView(CacheListViewName, listX0, contentY0, listX1, y1, gocui.TOP); err != nil {
+		if err != gocui.ErrUnknownView {
 			return err
 		}
-		cv.FrameColor = gocui.ColorGreen
-	} else {
-		cv.Clear()
-		fmt.Fprint(cv, cacheContent)
-		_ = cv.SetOrigin(0, cacheOriginY)
-		_ = cv.SetCursor(0, cacheCurLine)
-
-		if g.CurrentView() == cv {
-			cv.FrameColor = gocui.ColorGreen
-		} else {
-			if _, err := g.SetCurrentView(CacheViewName); err == nil {
-				cv.FrameColor = gocui.ColorGreen
-			} else {
-				cv.FrameColor = gocui.ColorCyan
-			}
+		lv.Title = " Projects "
+		lv.Frame = true
+		lv.Editable = false
+		lv.Wrap = false
+		lv.Highlight = false
+		lv.FrameColor = gocui.ColorGreen
+		if _, err := g.SetCurrentView(CacheListViewName); err != nil {
+			return err
 		}
 	}
+	app.refreshCacheList(g)
+
+	if dv, err := g.SetView(CacheDetailViewName, detailX0, contentY0, detailX1, y1, gocui.TOP); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		dv.Title = " Stored Configuration & Details "
+		dv.Frame = true
+		dv.Editable = false
+		dv.Wrap = true
+		dv.FrameColor = gocui.ColorBlue
+	}
+	app.refreshCacheDetail(g)
 
 	statusBarY0 := maxY - 2
 	statusBarY1 := maxY
@@ -427,13 +444,15 @@ func (app *App) layoutCacheView(g *gocui.Gui) error {
 		sv.Wrap = false
 		sv.FgColor = gocui.ColorWhite
 		sv.BgColor = gocui.ColorDefault
-		if !awaitingConfirm {
-			app.resetStatusForCacheView(g)
-		}
-	} else {
-		if !awaitingConfirm {
-			app.resetStatusForCacheView(g)
-		}
+	}
+
+	app.mutex.Lock()
+	awaitingDel := app.awaitingCacheDeleteConfirmation
+	awaitingClr := app.awaitingCacheClearConfirmation
+	app.mutex.Unlock()
+
+	if !awaitingDel && !awaitingClr {
+		app.resetStatusForCacheView(g)
 	}
 
 	return nil
@@ -547,7 +566,6 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 	}
 
 	app.adjustFilesViewScroll(g, v)
-
 	app.resetStatus(g)
 }
 
@@ -692,7 +710,6 @@ func (app *App) resetStatus(g *gocui.Gui) {
 
 		v.Clear()
 		statusText := "/: Search | f: GitFilter | s: Sort | Ctrl+F: Mode | ?: Help | q: Quit"
-
 		fmt.Fprint(v, statusText)
 		v.Rewind()
 
@@ -705,7 +722,7 @@ func (app *App) resetStatusForCacheView(g *gocui.Gui) {
 		v, err := g.View(StatusViewName)
 		if err == nil {
 			v.Clear()
-			fmt.Fprint(v, "↑↓/jk: Navigate | PgUp/Dn: Scroll | Ctrl+D: Clear Cache | Esc/q: Close")
+			fmt.Fprint(v, "↑↓/jk: Navigate | Space: Select | a: Select All | d/x: Delete | Ctrl+D: Clear All | Esc/q: Close")
 			v.Rewind()
 		} else if err != gocui.ErrUnknownView {
 			return err

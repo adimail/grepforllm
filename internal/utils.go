@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 func getCacheFilePath() (string, error) {
@@ -114,6 +115,35 @@ func formatTokens(t int) string {
 		return fmt.Sprintf("%.1fk", float64(t)/1000)
 	}
 	return fmt.Sprintf("%.1fM", float64(t)/1000000)
+}
+
+func formatRelativeTime(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	diff := time.Since(t)
+	if diff < time.Minute {
+		return "just now"
+	} else if diff < time.Hour {
+		m := int(diff.Minutes())
+		if m == 1 {
+			return "1m ago"
+		}
+		return fmt.Sprintf("%dm ago", m)
+	} else if diff < 24*time.Hour {
+		h := int(diff.Hours())
+		if h == 1 {
+			return "1h ago"
+		}
+		return fmt.Sprintf("%dh ago", h)
+	} else if diff < 30*24*time.Hour {
+		d := int(diff.Hours() / 24)
+		if d == 1 {
+			return "1d ago"
+		}
+		return fmt.Sprintf("%dd ago", d)
+	}
+	return t.Format("2006-01-02")
 }
 
 func max(a, b int) int {
