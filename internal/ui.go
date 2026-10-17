@@ -168,11 +168,15 @@ func (app *App) GrepApplicationView(g *gocui.Gui) error {
 	}
 
 	app.mutex.Lock()
-	modeStr := "Exclude"
 	currentFilterMode := app.filterMode
 	currentExcludes := app.excludes
 	currentIncludes := app.includes
 	app.mutex.Unlock()
+
+	modeStr := "Exclude"
+	if currentFilterMode == IncludeMode {
+		modeStr = "Include"
+	}
 
 	filterV, _ := g.View(FilterViewName)
 	if filterV != nil {
@@ -292,6 +296,7 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		fmt.Fprintln(v, pad("  Tab                 : Switch focus Files <-> Search <-> Filter <-> Content"))
 		fmt.Fprintln(v, pad("  ?                   : Toggle this help message"))
 		fmt.Fprintln(v, pad("  Ctrl+C              : Show Project Cache History"))
+		fmt.Fprintln(v, pad("  Ctrl+F              : Toggle filter mode (Include/Exclude)"))
 		fmt.Fprintln(v, pad("  q                   : Quit / Close Modal"))
 		fmt.Fprintln(v, pad("  Ctrl+Q              : Force Quit Application"))
 		fmt.Fprintln(v, pad(""))
@@ -300,7 +305,7 @@ func (app *App) layoutHelpView(g *gocui.Gui) error {
 		fmt.Fprintln(v, pad("  ↓ / j               : Move cursor down"))
 		fmt.Fprintln(v, pad("  /                   : Open dedicated Search section"))
 		fmt.Fprintln(v, pad("  s                   : Cycle Sort (Name -> Size -> Tokens -> Date)"))
-		fmt.Fprintln(v, pad("  f                   : Cycle Git Filter (All -> Changed -> Modified -> Untracked -> Staged)"))
+		fmt.Fprintln(v, pad("  f                   : Cycle Git Filter (All -> Changed -> New -> Updated)"))
 		fmt.Fprintln(v, pad("  J / K               : Scroll Content preview directly"))
 		fmt.Fprintln(v, pad("  Ctrl+J / Ctrl+K     : Scroll Content preview directly"))
 		fmt.Fprintln(v, pad("  Enter               : Focus Content View for line scrolling"))
@@ -457,12 +462,10 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 	switch app.gitFilterMode {
 	case GitFilterChanged:
 		gitFilterStr = "Changed"
-	case GitFilterModified:
-		gitFilterStr = "Mod"
-	case GitFilterUntracked:
+	case GitFilterNew:
 		gitFilterStr = "New"
-	case GitFilterStaged:
-		gitFilterStr = "Staged"
+	case GitFilterUpdated:
+		gitFilterStr = "Updated"
 	}
 
 	selectedCount := len(app.selectedFiles)
@@ -513,8 +516,6 @@ func (app *App) refreshFilesView(g *gocui.Gui) {
 			gitColor = "\x1b[33m"
 		case GitUntracked:
 			gitColor = "\x1b[31m"
-		case GitStaged:
-			gitColor = "\x1b[36m"
 		}
 
 		line := fmt.Sprintf("%s %s (%s)", prefix, file.RelPath, formatTokens(file.EstimatedTokens))
@@ -690,7 +691,7 @@ func (app *App) resetStatus(g *gocui.Gui) {
 		}
 
 		v.Clear()
-		statusText := "/: Search | f: GitFilter | s: Sort | ?: Help | q: Quit"
+		statusText := "/: Search | f: GitFilter | s: Sort | Ctrl+F: Mode | ?: Help | q: Quit"
 
 		fmt.Fprint(v, statusText)
 		v.Rewind()

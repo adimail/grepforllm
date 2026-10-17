@@ -156,11 +156,13 @@ func (app *App) ConfirmClearCache(g *gocui.Gui, v *gocui.View) error {
 			app.mutex.Lock()
 			app.cache = make(AppCache)
 			app.cache[app.rootDir] = DirectoryCache{
-				Includes:   app.includes,
-				Excludes:   app.excludes,
-				LastOpened: time.Now(),
-				FilterMode: app.filterMode,
-				SortMode:   app.sortMode,
+				Includes:      app.includes,
+				Excludes:      app.excludes,
+				SearchQuery:   app.searchQuery,
+				LastOpened:    time.Now(),
+				FilterMode:    app.filterMode,
+				SortMode:      app.sortMode,
+				GitFilterMode: app.gitFilterMode,
 			}
 			app.mutex.Unlock()
 		}

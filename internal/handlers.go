@@ -107,6 +107,7 @@ func (app *App) ConfirmSearch(g *gocui.Gui, v *gocui.View) error {
 	if app.searchQuery == "" {
 		app.isSearchActive = false
 	}
+	app.saveCurrentStateToCache()
 	app.applyFilters()
 
 	g.Update(func(g *gocui.Gui) error {
@@ -121,6 +122,7 @@ func (app *App) CancelSearch(g *gocui.Gui, v *gocui.View) error {
 	app.searchQuery = ""
 	app.isSearchActive = false
 	_ = g.DeleteView(SearchViewName)
+	app.saveCurrentStateToCache()
 	app.applyFilters()
 
 	g.Update(func(g *gocui.Gui) error {
@@ -148,53 +150,22 @@ func (app *App) SearchEditor(v *gocui.View, key gocui.Key, ch rune, mod gocui.Mo
 
 	app.mutex.Lock()
 	app.searchQuery = strings.TrimSpace(v.Buffer())
+	app.saveCurrentStateToCache()
 	app.applyFilters()
 }
 
 func (app *App) CycleSortMode(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Lock()
 	app.sortMode = (app.sortMode + 1) % 4
-
-	if app.cacheFilePath != "" {
-		if _, ok := app.cache[app.rootDir]; !ok {
-			app.cache[app.rootDir] = DirectoryCache{}
-		}
-		currentEntry := app.cache[app.rootDir]
-		currentEntry.Includes = app.includes
-		currentEntry.Excludes = app.excludes
-		currentEntry.FilterMode = app.filterMode
-		currentEntry.SortMode = app.sortMode
-		currentEntry.GitFilterMode = app.gitFilterMode
-		currentEntry.LastOpened = time.Now()
-		app.cache[app.rootDir] = currentEntry
-
-		_ = saveCache(app.cacheFilePath, app.cache)
-	}
-
+	app.saveCurrentStateToCache()
 	app.applyFilters()
 	return nil
 }
 
 func (app *App) CycleGitFilterMode(g *gocui.Gui, v *gocui.View) error {
 	app.mutex.Lock()
-	app.gitFilterMode = (app.gitFilterMode + 1) % 5
-
-	if app.cacheFilePath != "" {
-		if _, ok := app.cache[app.rootDir]; !ok {
-			app.cache[app.rootDir] = DirectoryCache{}
-		}
-		currentEntry := app.cache[app.rootDir]
-		currentEntry.Includes = app.includes
-		currentEntry.Excludes = app.excludes
-		currentEntry.FilterMode = app.filterMode
-		currentEntry.SortMode = app.sortMode
-		currentEntry.GitFilterMode = app.gitFilterMode
-		currentEntry.LastOpened = time.Now()
-		app.cache[app.rootDir] = currentEntry
-
-		_ = saveCache(app.cacheFilePath, app.cache)
-	}
-
+	app.gitFilterMode = (app.gitFilterMode + 1) % 4
+	app.saveCurrentStateToCache()
 	app.applyFilters()
 	return nil
 }
@@ -327,25 +298,7 @@ func (app *App) ApplyFilter(g *gocui.Gui, v *gocui.View) error {
 		app.includes = pattern
 	}
 
-	if app.cacheFilePath != "" {
-		if _, ok := app.cache[app.rootDir]; !ok {
-			app.cache[app.rootDir] = DirectoryCache{}
-		}
-		currentEntry := app.cache[app.rootDir]
-		currentEntry.Includes = app.includes
-		currentEntry.Excludes = app.excludes
-		currentEntry.LastOpened = time.Now()
-		currentEntry.FilterMode = app.filterMode
-		currentEntry.SortMode = app.sortMode
-		currentEntry.GitFilterMode = app.gitFilterMode
-		app.cache[app.rootDir] = currentEntry
-
-		err := saveCache(app.cacheFilePath, app.cache)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to save cache on ApplyFilter: %v\n", err)
-		}
-	}
-
+	app.saveCurrentStateToCache()
 	app.applyFilters()
 
 	g.Update(func(g *gocui.Gui) error {
@@ -406,32 +359,28 @@ func (app *App) CursorDown(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *App) ToggleFilterMode(g *gocui.Gui, v *gocui.View) error {
-	if v == nil || v.Name() != FilterViewName {
-		return nil
-	}
-
 	app.mutex.Lock()
 	if app.filterMode == ExcludeMode {
 		app.filterMode = IncludeMode
 	} else {
 		app.filterMode = ExcludeMode
 	}
+	app.saveCurrentStateToCache()
 
-	if app.cacheFilePath != "" {
-		if _, ok := app.cache[app.rootDir]; ok {
-			currentEntry := app.cache[app.rootDir]
-			currentEntry.FilterMode = app.filterMode
-			currentEntry.SortMode = app.sortMode
-			currentEntry.GitFilterMode = app.gitFilterMode
-			currentEntry.LastOpened = time.Now()
-			app.cache[app.rootDir] = currentEntry
-			err := saveCache(app.cacheFilePath, app.cache)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Failed to save cache on ToggleFilterMode: %v\n", err)
-			}
+	fv, _ := g.View(FilterViewName)
+	if fv != nil {
+		fv.Clear()
+		var text string
+		if app.filterMode == ExcludeMode {
+			text = app.excludes
+		} else {
+			text = app.includes
 		}
+		fmt.Fprint(fv, text)
+		_ = fv.SetCursor(len(text), 0)
 	}
-	app.mutex.Unlock()
+
+	app.applyFilters()
 
 	g.Update(func(g *gocui.Gui) error {
 		return app.Layout(g)

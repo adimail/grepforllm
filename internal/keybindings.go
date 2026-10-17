@@ -28,6 +28,9 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding("", gocui.KeyPgdn, gocui.ModNone, app.ScrollContentDown); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding("", gocui.KeyCtrlF, gocui.ModNone, app.ToggleFilterMode); err != nil {
+		return err
+	}
 
 	// Files view keybindings
 	if err := g.SetKeybinding(FilesViewName, gocui.KeyArrowUp, gocui.ModNone, app.CursorUp); err != nil {
@@ -154,9 +157,6 @@ func (app *App) SetKeybindings(g *gocui.Gui) error {
 	if err := g.SetKeybinding(FilterViewName, gocui.KeyEsc, gocui.ModNone, app.CancelFilter); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(FilterViewName, gocui.KeyCtrlF, gocui.ModNone, app.ToggleFilterMode); err != nil {
-		return err
-	}
 
 	// Cache history table navigation and cursor movements
 	if err := g.SetKeybinding(CacheViewName, gocui.KeyEsc, gocui.ModNone, app.CloseCacheView); err != nil {
@@ -201,6 +201,7 @@ func (app *App) QuitHandler(g *gocui.Gui, v *gocui.View) error {
 	isCacheViewOpen := app.showCacheView
 	awaitingConfirm := app.awaitingCacheClearConfirmation
 	searchActive := app.isSearchActive
+	app.saveCurrentStateToCache()
 	app.mutex.Unlock()
 
 	if searchActive {

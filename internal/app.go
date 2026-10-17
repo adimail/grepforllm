@@ -47,7 +47,6 @@ const (
 	GitClean GitStatus = iota
 	GitModified
 	GitUntracked
-	GitStaged
 )
 
 type GitFilterMode int
@@ -55,9 +54,8 @@ type GitFilterMode int
 const (
 	GitFilterAll GitFilterMode = iota
 	GitFilterChanged
-	GitFilterModified
-	GitFilterUntracked
-	GitFilterStaged
+	GitFilterNew
+	GitFilterUpdated
 )
 
 type FileItem struct {
@@ -71,6 +69,7 @@ type FileItem struct {
 type DirectoryCache struct {
 	Includes      string        `json:"includes"`
 	Excludes      string        `json:"excludes"`
+	SearchQuery   string        `json:"searchQuery,omitempty"`
 	LastOpened    time.Time     `json:"lastOpened"`
 	FilterMode    FilterMode    `json:"filterMode"`
 	SortMode      SortMode      `json:"sortMode,omitempty"`
@@ -131,7 +130,7 @@ func NewApp(rootDir string) *App {
 		sortMode:               SortByName,
 		gitFilterMode:          GitFilterAll,
 		gitStatusMap:           make(map[string]GitStatus),
-		excludes:               DefaultExcludes,
+		excludes:               "",
 		includes:               "",
 		searchQuery:            "",
 		isSearchActive:         false,
@@ -164,9 +163,20 @@ func NewApp(rootDir string) *App {
 			app.cache = make(AppCache)
 		}
 
+		for k, v := range app.cache {
+			if v.Excludes == DefaultExcludes {
+				v.Excludes = ""
+				app.cache[k] = v
+			}
+		}
+
 		if entry, ok := app.cache[app.rootDir]; ok {
 			app.includes = entry.Includes
 			app.excludes = entry.Excludes
+			app.searchQuery = entry.SearchQuery
+			if app.searchQuery != "" {
+				app.isSearchActive = true
+			}
 			app.filterMode = entry.FilterMode
 			app.sortMode = entry.SortMode
 			app.gitFilterMode = entry.GitFilterMode
@@ -176,6 +186,7 @@ func NewApp(rootDir string) *App {
 			app.cache[app.rootDir] = DirectoryCache{
 				Includes:      app.includes,
 				Excludes:      app.excludes,
+				SearchQuery:   app.searchQuery,
 				LastOpened:    time.Now(),
 				FilterMode:    app.filterMode,
 				SortMode:      app.sortMode,
@@ -208,4 +219,21 @@ func (app *App) SetGitignoreMatcher(matcher gitignore.GitIgnore) {
 	app.mutex.Lock()
 	defer app.mutex.Unlock()
 	app.gitignoreMatcher = matcher
+}
+
+func (app *App) saveCurrentStateToCache() {
+	if app.cacheFilePath == "" {
+		return
+	}
+	entry := DirectoryCache{
+		Includes:      app.includes,
+		Excludes:      app.excludes,
+		SearchQuery:   app.searchQuery,
+		LastOpened:    time.Now(),
+		FilterMode:    app.filterMode,
+		SortMode:      app.sortMode,
+		GitFilterMode: app.gitFilterMode,
+	}
+	app.cache[app.rootDir] = entry
+	_ = saveCache(app.cacheFilePath, app.cache)
 }

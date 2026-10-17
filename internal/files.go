@@ -12,59 +12,6 @@ import (
 	"github.com/awesome-gocui/gocui"
 )
 
-var binaryExtensions = map[string]bool{
-	".png":     true,
-	".jpg":     true,
-	".jpeg":    true,
-	".gif":     true,
-	".ico":     true,
-	".webp":    true,
-	".bmp":     true,
-	".tiff":    true,
-	".pdf":     true,
-	".doc":     true,
-	".docx":    true,
-	".xls":     true,
-	".xlsx":    true,
-	".ppt":     true,
-	".pptx":    true,
-	".zip":     true,
-	".tar":     true,
-	".gz":      true,
-	".bz2":     true,
-	".xz":      true,
-	".7z":      true,
-	".rar":     true,
-	".exe":     true,
-	".bin":     true,
-	".dll":     true,
-	".so":      true,
-	".dylib":   true,
-	".o":       true,
-	".a":       true,
-	".lib":     true,
-	".pyc":     true,
-	".class":   true,
-	".woff":    true,
-	".woff2":   true,
-	".ttf":     true,
-	".eot":     true,
-	".otf":     true,
-	".mp3":     true,
-	".mp4":     true,
-	".wav":     true,
-	".flac":    true,
-	".ogg":     true,
-	".mov":     true,
-	".avi":     true,
-	".mkv":     true,
-	".webm":    true,
-	".db":      true,
-	".sqlite":  true,
-	".sqlite3": true,
-	".wasm":    true,
-}
-
 func (app *App) loadGitStatus() map[string]GitStatus {
 	statusMap := make(map[string]GitStatus)
 	cmd := exec.Command("git", "status", "--porcelain", "-uall")
@@ -90,12 +37,8 @@ func (app *App) loadGitStatus() map[string]GitStatus {
 		pathPart = filepath.ToSlash(pathPart)
 
 		var status GitStatus
-		if code == "??" {
+		if code == "??" || code[0] == 'A' || code[1] == 'A' {
 			status = GitUntracked
-		} else if code[0] == 'M' || code[1] == 'M' || code[0] == 'D' || code[1] == 'D' {
-			status = GitModified
-		} else if code[0] == 'A' || code[0] == 'R' || code[0] == 'C' {
-			status = GitStaged
 		} else {
 			status = GitModified
 		}
@@ -159,16 +102,12 @@ func (app *App) ListFiles() error {
 			return nil
 		}
 
-		if relPathSlash == ".gitignore" {
+		baseName := d.Name()
+		if baseName == ".gitignore" {
 			return nil
 		}
 
 		if app.gitignoreMatcher != nil && app.gitignoreMatcher.Ignore(relPathSlash) {
-			return nil
-		}
-
-		ext := strings.ToLower(filepath.Ext(relPathSlash))
-		if binaryExtensions[ext] {
 			return nil
 		}
 
@@ -178,6 +117,19 @@ func (app *App) ListFiles() error {
 		}
 
 		size := info.Size()
+		if size > 0 {
+			file, err := os.Open(path)
+			if err != nil {
+				return nil
+			}
+			buf := make([]byte, 512)
+			n, _ := file.Read(buf)
+			_ = file.Close()
+			if n > 0 && !isLikelyText(buf[:n]) {
+				return nil
+			}
+		}
+
 		tokens := int(size / 4)
 		if size > 0 && tokens == 0 {
 			tokens = 1
@@ -231,19 +183,15 @@ func (app *App) applyFilters() {
 
 		switch app.gitFilterMode {
 		case GitFilterChanged:
-			if file.GitStatus == GitClean {
+			if file.GitStatus != GitUntracked && file.GitStatus != GitModified {
 				continue
 			}
-		case GitFilterModified:
-			if file.GitStatus != GitModified {
-				continue
-			}
-		case GitFilterUntracked:
+		case GitFilterNew:
 			if file.GitStatus != GitUntracked {
 				continue
 			}
-		case GitFilterStaged:
-			if file.GitStatus != GitStaged {
+		case GitFilterUpdated:
+			if file.GitStatus != GitModified {
 				continue
 			}
 		}
